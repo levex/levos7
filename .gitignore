@@ -1,2 +1,9 @@
 *.o
 *.img
+Make.dep
+Make.dep.bak
+hello
+kernel.sym
+userspace/port
+userspace/simple/sh
+userspace/simple/hello

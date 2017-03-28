@@ -1,4 +1,5 @@
 KERN_NAME=kernel.img
+KERN_SYM=kernel.sym
 ARCH=x86
 
 QEMU_OPTS=-serial stdio -no-reboot
@@ -8,12 +9,16 @@ QEMU_OPTS=-serial stdio -no-reboot
 
 SOURCEDIR=.
 
-C_SOURCES  := $(shell find $(SOURCEDIR) -name '*.c')
-AS_SOURCES := $(shell find $(SOURCEDIR) -name '*.S')
-OBJS = $(subst .c,.o,$(C_SOURCES))
-OBJS += $(subst .S,.o,$(AS_SOURCES))
+C_SOURCES  := $(shell find $(SOURCEDIR) -name '*.c' -not -path "$(SOURCEDIR)/userspace/*")
+AS_SOURCES := $(shell find $(SOURCEDIR) -name '*.S' -not -path "$(SOURCEDIR)/userspace/*")
+OBJS = $(sort $(subst .c,.o,$(C_SOURCES)))
+OBJS += $(sort $(subst .S,.o,$(AS_SOURCES)))
 
-all: $(KERN_NAME)
+all: $(KERN_NAME) $(KERN_SYM)
+
+$(KERN_SYM): $(KERN_NAME)
+	@$(OBJCOPY) --only-keep-debug $(KERN_NAME) $(KERN_SYM)
+	@echo "  STRIP    $(KERN_SYM)"
 
 start: $(KERN_NAME)
 	@echo "  QEMU     $(KERN_NAME)"
@@ -34,7 +39,10 @@ CFLAGS += -g
 
 %.o: %.S
 	@echo "  AS       $@"
-	@$(AS) -c $< -o $@
+	@$(AS) -g -c $< -o $@
+
+depend:
+	makedepend -f Make.dep -Iinclude $(C_SOURCES)
 
 $(KERN_NAME): $(OBJS)
 	@echo "  LD       $@"
@@ -48,3 +56,5 @@ preprocess: $(KERN_NAME)
 clean:
 	-rm $(OBJS)
 	-rm $(KERN_NAME)
+
+include Make.dep

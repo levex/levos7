@@ -1,31 +1,12 @@
 #include "gdt.h"
+#include "tss.h"
+#include <levos/kernel.h>
 
 #include <stdint.h>
 
-#define SEL_NULL        0x00    /* Null selector. */
-#define SEL_KCSEG       0x08    /* Kernel code selector. */
-#define SEL_KDSEG       0x10    /* Kernel data selector. */
-#define SEL_UCSEG       0x1B    /* User code selector. */
-#define SEL_UDSEG       0x23    /* User data selector. */
-#define SEL_TSS         0x28    /* Task-state segment. */
-#define SEL_CNT         6       /* Number of segments. */
-
-enum seg_class
-{
-    CLS_SYSTEM = 0,             /* System segment. */
-    CLS_CODE_DATA = 1           /* Code or data segment. */
-};
-
-enum seg_granularity
-{
-    GRAN_BYTE = 0,              /* Limit has 1-byte granularity. */
-    GRAN_PAGE = 1               /* Limit has 4 kB granularity. */
-};
-
-#define SEL_CNT 6
 static uint64_t gdt[SEL_CNT];
 
-static uint64_t
+uint64_t
 make_seg_desc(uint32_t base,
               uint32_t limit,
               enum seg_class class,
@@ -63,12 +44,6 @@ make_data_desc (int dpl)
 }
 
 static uint64_t
-make_tss_desc (void *laddr)
-{
-    return make_seg_desc ((uint32_t) laddr, 0x67, CLS_SYSTEM, 9, 0, GRAN_BYTE);
-}
-
-static uint64_t
 make_gdtr_operand (uint16_t limit, void *base)
 {
     return limit | ((uint64_t) (uint32_t) base << 16);
@@ -80,16 +55,20 @@ gdt_init(void)
     uint64_t gdtr_operand;
 
     /* null descriptor */
-    gdt[SEL_NULL  / sizeof(*gdt)] = 0;
+    gdt[SEL_NULL  / sizeof(*gdt)] = 0; /* 0x0 */
 
     /* kernel descriptors */
-    gdt[SEL_KCSEG / sizeof(*gdt)] = make_code_desc (0);
-    gdt[SEL_KDSEG / sizeof(*gdt)] = make_data_desc (0);
+    gdt[SEL_KCSEG / sizeof(*gdt)] = make_code_desc (0); /* 0x8 */
+    gdt[SEL_KDSEG / sizeof(*gdt)] = make_data_desc (0); /* 0x10 */
 
     /* userspace descriptors */
-    gdt[SEL_UCSEG / sizeof(*gdt)] = make_code_desc (3);
-    gdt[SEL_UDSEG / sizeof(*gdt)] = make_data_desc (3);
+    gdt[SEL_UCSEG / sizeof(*gdt)] = make_code_desc (3); /* 0x18  / 0x1B*/
+    gdt[SEL_UDSEG / sizeof(*gdt)] = make_data_desc (3); /* 0x20  / 0x23*/
+
+    /* TSS */
+    gdt[SEL_TSS / sizeof(*gdt)] = make_tss_desc(tss_get());
 
     gdtr_operand = make_gdtr_operand (sizeof(gdt) - 1, gdt);
     asm volatile ("lgdt %0" : : "m" (gdtr_operand));
+    asm volatile ("ltr %w0" : : "q" (SEL_TSS));
 }
