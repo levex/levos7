@@ -13,6 +13,100 @@ syscall_undefined(uint32_t no)
     printk("WARNING: undefined systemcall %d\n", no);
 }
 
+static int
+verify_buffer(uint32_t start, size_t sz)
+{
+    int i;
+
+    //printk("%s: start 0x%x sz %d\n", __func__, start, sz);
+
+    /* is the buffer a valid user address? */
+    if (start > VIRT_BASE || start + sz > VIRT_BASE) {
+        //printk("Case KERN\n");
+        return 1;
+    }
+
+    /* if a null pointer or looks like one then bail */
+    if (start < 4096) {
+        //printk("Case NULL\n");
+        return 1;
+    }
+
+    if (start % 0x1000 == 0) {
+        //printk("Case 1\n");
+        /* we are on a page boundary, should be easy to check */
+        for (i = 0; i < sz; i += 0x1000) {
+            if (!page_mapped_curr(start + i))
+                return 1;
+        }
+    } else {
+        /* first, check if the size concerns the next page */
+        uint32_t this_page = PG_RND_DOWN(start);
+        uint32_t next_page = PG_RND_DOWN(start + sz);
+        //printk("Case 2 this: 0x%x next: 0x%x\n", this_page, next_page);
+
+        /* the buffer is as a whole on the same page */
+        if (this_page == next_page) {
+            //printk("Case 2.1\n");
+            if (page_mapped_curr(start)) {
+                //printk("Case 2.1.T\n");
+                return 0;
+            }
+            //printk("Case 2.1.F\n");
+            return 1;
+        } else {
+            //printk("Case 2.2");
+            /* check the next pages */
+            for (i = 0; i < sz; i += 0x1000) {
+                if (!page_mapped_curr(start + i)) {
+             //       printk("Case 2.2.F");
+                    return 1;
+                }
+            }
+            //printk("Case 2.2.T");
+            return 0;
+        }
+    }
+
+    /* all done, the buffer is valid */
+    return 0;
+}
+
+int
+verify_buffer_string(uint32_t string, int max)
+{
+    int i;
+    char c;
+    char *p = (char *)string;
+
+    /* First check if the whole buffer would fit anyway */
+    if (verify_buffer(string, max) == 0)
+        return 0;
+
+    /* check if the first byte is valid */
+    if (verify_buffer(string, 0) != 0)
+        return 1;
+
+    /*
+     * the whole buffer doesnt fit, check byte-by-byte until a zero
+     * byte is found
+     */
+    for (i = 0; i < max; i ++) {
+        c = p[i];
+
+        /* found end, good to go */
+        if (c == 0)
+            return 0;
+
+        /* verify that the next access is correct */
+        if (verify_buffer(&p[i+1], 0) != 0)
+            return 1;
+    }
+
+    /* overflowed the max */
+    return 1;
+}
+
 
 static int
 sys_open(char *filename, int flags, int mode)
@@ -21,7 +115,7 @@ sys_open(char *filename, int flags, int mode)
     struct task *task = current_task;
     int i;
 
-    if (filename == NULL)
+    if (verify_buffer_string(filename, PATH_MAX))
         return -EFAULT;
 
     f = vfs_open(filename);
@@ -61,6 +155,12 @@ sys_getpid(void)
 static int
 sys_stat(char *fn, struct stat *st)
 {
+    if (verify_buffer_string(fn, PATH_MAX))
+        return -EFAULT;
+
+    if (verify_buffer(st, sizeof(*st)))
+        return -EFAULT;
+
     return vfs_stat(fn, st);
 }
 
@@ -72,12 +172,12 @@ sys_fstat(int fd, struct stat *st)
     if (fd < 0 || fd >= FD_MAX)
         return -EBADF;
 
+    if (verify_buffer(st, sizeof(*st)))
+        return -EFAULT;
+
     f = current_task->file_table[fd];
     if (!f)
             return -EBADF;
-
-    if (!st)
-        return -EFAULT;
 
     f->fops->fstat(f, st);
 }
@@ -86,6 +186,9 @@ static int
 sys_execve(char *fn, char **argvp, char **envp)
 {
     int rc = 0;
+
+    if (verify_buffer_string(fn, PATH_MAX))
+        return -EFAULT;
 
     char *kfn = malloc(strlen(fn) + 1);
     if (!kfn)
@@ -135,7 +238,7 @@ sys_write(int fd, char *buf, size_t count)
     if (count == 0)
         return 0;
 
-    if (buf == NULL)
+    if (verify_buffer(buf, count))
         return -EFAULT;
 
     return f->fops->write(f, buf, count);
@@ -189,7 +292,7 @@ sys_read(int fd, char *buf, size_t count)
     if (count == 0)
         return 0;
 
-    if (buf == NULL)
+    if (verify_buffer(buf, count))
         return -EFAULT;
 
     return f->fops->read(f, buf, count);
@@ -198,7 +301,7 @@ sys_read(int fd, char *buf, size_t count)
 int
 sys_uname(struct uname *un)
 {
-    if (un == NULL)
+    if (verify_buffer(un, sizeof(*un)))
         return -EFAULT;
 
     do_uname(un);

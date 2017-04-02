@@ -1,6 +1,8 @@
 #ifndef __LEVOS_ATA_H
 #define __LEVOS_ATA_H
 
+#include <levos/arch.h>
+
 #define ATA_SR_BSY     0x80
 #define ATA_SR_DRDY    0x40
 #define ATA_SR_DF      0x20
@@ -68,6 +70,13 @@
 #define ATA_REG_CONTROL    0x0C
 #define ATA_REG_ALTSTATUS  0x0C
 #define ATA_REG_DEVADDRESS 0x0D
+
+inline int
+ata_altstatus_check_set(int io, int bit)
+{
+    uint8_t status = ioportb(io + ATA_REG_STATUS);
+    return status & bit ? 1 : 0;
+}
 
 
 // Directions:

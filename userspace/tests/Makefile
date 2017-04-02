@@ -9,6 +9,7 @@ CFLAGS=$(BASE_CFLAGS) -L$(LEVOS_CRT) $(LEVOS_SYSROOT)/usr/i686-levos/lib/crt0.o
 POST_CFLAGS=-lc -lg -lm -lnosys
 
 TESTS=basic-boot \
+      buffer-check \
       write-robust \
       open-robust \
       open-dir \
@@ -38,7 +39,7 @@ test: clean_test $(TEST_RESULTS)
 	-@bin/show_results.sh
 
 %.result: %
-	@echo "  TEST    $<"
+	-@/bin/echo -n "  TEST    $<"
 	-@dd if=/dev/zero of=test.img bs=512 count=8192 >/dev/null 2>&1
 	-@/usr/local/opt/e2fsprogs/sbin/mkfs.ext2 test.img >/dev/null 2>&1
 	-@mkdir -p mnt >/dev/null 2>&1
@@ -47,6 +48,7 @@ test: clean_test $(TEST_RESULTS)
 	-@sync >/dev/null 2>&1
 	-@diskutil umount $(shell pwd)/mnt >/dev/null 2>&1
 	-@bin/run_test.sh $<
+	-@bin/show_results.sh $<
 
 base.o: base.c
 	@echo "  CC      $@"

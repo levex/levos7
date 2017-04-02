@@ -43,7 +43,7 @@ typedef pde_t       *pagedir_t;
 #define PG_R_RO       0
 #define PG_R_RW       1
 
-#define PG_RND_DOWN(a) ((a / 4096) * 4096)
+#define PG_RND_DOWN(a) ROUND_DOWN(a, 0x1000)
 
 void paging_init(void);
 int map_page(pagedir_t, uint32_t, uint32_t, int);
@@ -53,6 +53,10 @@ pagedir_t copy_page_dir(pagedir_t);
 void replace_page(pagedir_t, uint32_t, pde_t);
 
 void handle_pagefault(struct pt_regs *);
+
+
+int page_mapped(pagedir_t, uint32_t);
+int page_mapped_curr(uint32_t);
 
 
 extern pde_t kernel_pgd[1024] __page_align;

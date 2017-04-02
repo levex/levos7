@@ -141,6 +141,8 @@ exit:    free(ibuf);
 int
 ext2_read_file(struct file *f, void *buf, size_t count)
 {
+    int rc;
+
     if (!count)
         return 0;
 
@@ -163,20 +165,42 @@ ext2_read_file(struct file *f, void *buf, size_t count)
     int cblock = f->fpos / bs;
     int coff = f->fpos % bs;
 
-    void *block = malloc(bs * (blocks + 1));
-    if (!block)
+    int start_block = f->fpos / bs;
+    uint32_t end = f->fpos + count;
+    int end_block = end / bs;
+    uint32_t end_size = end - end_block * bs;
+    uint32_t to_read = end - f->fpos;
+
+    uint8_t *buffer = malloc(bs);
+    if (!buffer)
         return -ENOMEM;
 
-    ext2_file_read_block(f, block, cblock);
-    for (int i = 0; i < blocks; i++)
-        ext2_file_read_block(f, block + (i + 1) * bs, cblock + i + 1);
-
-    /* now read the bytes */
-    memcpy(buf, block + (f->fpos - cblock * bs), count);
+	if (start_block == end_block) {
+		ext2_file_read_block(f, buffer, start_block);
+		memcpy(buf, (uint8_t *)(((uint32_t)buffer) + (f->fpos % bs)), to_read);
+	} else {
+		uint32_t block_offset;
+		uint32_t blocks_read = 0;
+		for (block_offset = start_block; block_offset < end_block; block_offset++, blocks_read++) {
+			if (block_offset == start_block) {
+				ext2_file_read_block(f, buffer, block_offset);
+				memcpy(buf, (uint8_t *)(((uint32_t)buffer) + (f->fpos % bs)), bs - (f->fpos % bs));
+			} else {
+				ext2_file_read_block(f, buffer, block_offset);
+				memcpy(buf + bs * blocks_read - (f->fpos % bs), buffer, bs);
+			}
+		}
+		if (end_size) {
+			ext2_file_read_block(f, buffer, end_block);
+			memcpy(buf + bs * blocks_read - (f->fpos % bs), buffer, end_size);
+		}
+	}
 
     f->fpos += count;
 
-    free(block);
+    rc = count;
+exit:
+    free(buffer);
     return count;
 }
 

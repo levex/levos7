@@ -108,6 +108,15 @@ get_page_from_pgd(pagedir_t pgd, uint32_t vaddr)
     ptes = (page_t *)pde;
     return &ptes[ipte];
 }
+
+page_t *
+get_page_from_curr(uint32_t vaddr)
+{
+    if (current_task && current_task->mm)
+        return get_page_from_pgd(current_task->mm, vaddr);
+    else return get_page_from_pgd(kernel_pgd, vaddr);
+}
+
 void
 do_cow(uint32_t cr2)
 {

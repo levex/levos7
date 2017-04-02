@@ -58,6 +58,7 @@ load_elf(struct file *f)
                         ph->p_filesz, ph->p_memsz);*/
             for(size_t i = 0; i < ph->p_memsz; i += 0x1000) {
                 uintptr_t page = palloc_get_page();
+#define PF_W 2
                 map_page_curr(page, ph->p_vaddr + i, 1);
             }
             __flush_tlb();
@@ -69,6 +70,14 @@ load_elf(struct file *f)
             f->fops->read(f, buf, ph->p_filesz);
 
             memcpy((void *) ph->p_vaddr, buf, ph->p_memsz);
+            /* mark the pages RO */
+            for(size_t i = ph->p_vaddr; i < ph->p_vaddr + ph->p_memsz; i += 0x1000) {
+                if (!(ph->p_flags & PF_W)) {
+                    page_t *p = get_page_from_curr(i);
+                    if (p)
+                        pte_mark_read_only(p);
+                }
+            }
             free(buf);
             break;
         default:
@@ -76,7 +85,9 @@ load_elf(struct file *f)
         }
     }
 
-    sh = malloc(sizeof(elf_section_header_t) * header.e_shnum);
+#define ELF_DO_SECTIONS
+#ifdef ELF_DO_SECTIONS
+    sh = malloc(header.e_shentsize * header.e_shnum);
     if (!sh) {
         free(ph);
         return -ENOMEM;
@@ -84,43 +95,42 @@ load_elf(struct file *f)
 
     file_seek(f, header.e_shoff);
     f->fops->read(f, sh, sizeof(elf_section_header_t) * header.e_shnum);
-/*
+
     char *strtab = NULL;
 
     // find the string table
-    printk("header.e_shstrndx = %d\n", header.e_shstrndx);
     elf_section_header_t *_sh = &sh[header.e_shstrndx];
+    //printk("header.e_shoff = %d header.e_shstrndx = %d\n", header.e_shoff, header.e_shstrndx);
 
     if (_sh->sh_type == SHT_STRTAB) {
-        if (strtab)
+        if (strtab) {
             printk("FATAL: overwriting string table\n");
+            return -EINVAL;
+        }
         strtab = malloc(_sh->sh_size);
         if (!strtab)
             return -ENOMEM;
+        //printk("SHSTRTAB: reading off 0x%x sz 0x%x\n", _sh->sh_offset, _sh->sh_size);
         file_seek(f, _sh->sh_offset);
-        printk("SHSTRTAB: reading off 0x%x sz 0x%x\n", _sh->sh_offset, _sh->sh_size);
         f->fops->read(f, strtab, _sh->sh_size);
-    }
+    } 
 
-    if (strtab == NULL) {
-        printk("No string table\n");
+    if (strtab == NULL)
         goto finish;
-    }*/
 
-    /* parse section headers */
+    // parse section headers
     for (i = 0; i < header.e_shnum; i ++){
-        /*char *name = &strtab[sh[i].sh_name];
-        printk("ID 0x%x\n", sh[i].sh_name);
-        printk("Section %s addr %x off %x size %x\n", name,
+        char *name = &strtab[sh[i].sh_name];
+        /*printk("%d Section %s addr %x off %x size %x\n", i, name,
                     sh[i].sh_addr, sh[i].sh_offset, sh[i].sh_size);*/
         if (sh[i].sh_type == SHT_NOBITS &&
                 sh[i].sh_flags & SHF_ALLOC &&
                 sh[i].sh_flags & SHF_WRITE)
         {
-            //printk("found .bss\n");
             memset(sh[i].sh_addr, 0, sh[i].sh_size);
         }
     }
+#endif
 
 finish:
     current_task->bstate.entry = header.e_entry;

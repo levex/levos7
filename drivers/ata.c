@@ -40,20 +40,21 @@ void
 ide_poll(uint16_t io)
 {
     uint8_t status;
-    ide_400ns_delay(io);
 
-    retry:
-    status = inportb(io + ATA_REG_STATUS);
-    if (status & ATA_SR_BSY)
-        goto retry;
+    /* read the ALTSTATUS 4 times */
+    inportb(io + ATA_REG_ALTSTATUS);
+    inportb(io + ATA_REG_ALTSTATUS);
+    inportb(io + ATA_REG_ALTSTATUS);
+    inportb(io + ATA_REG_ALTSTATUS);
 
-    retry2:
+    /* now wait for the BSY bit to clear */
+    while ((status = inportb(io + ATA_REG_STATUS)) & ATA_SR_BSY)
+        ;
+
     status = inportb(io + ATA_REG_STATUS);
+
     if (status & ATA_SR_ERR)
-        panic ("ata: ERROR bit set!\n");
-
-    if (!(status & ATA_SR_DRQ))
-        goto retry2;
+        panic("ATA ERR bit is set\n");
 
     return;
 }
@@ -69,7 +70,9 @@ ata_read_one_sector(char *buf, size_t lba)
 
     //printk("ata: lba: %d\n", lba);
 
+    ide_400ns_delay(io);
     outportb(io + ATA_REG_HDDEVSEL, (cmd | (uint8_t)((lba >> 24 & 0x0F))));
+    ide_poll(io);
     outportb(io + 1, 0x00);
     outportb(io + ATA_REG_SECCOUNT0, 1);
     outportb(io + ATA_REG_LBA0, (uint8_t)(lba));
@@ -93,19 +96,78 @@ ata_read(struct device *dev, void *buf, size_t count)
 {
     unsigned long pos = dev->pos;
 
+    DISABLE_IRQ();
+
     for (int i = 0; i < count; i++)
     {
         ata_read_one_sector(buf, pos + i);
         buf += 512;
     }
     dev->pos += count;
+
+    ENABLE_IRQ();
     return count;
 }
 
 int
-ata_write(const void *buf, size_t c, size_t p)
+ata_write_one_sector(uint16_t *buf, size_t lba)
 {
-    return -ENOSYS;
+    uint16_t io = ATA_PRIMARY_IO;
+    uint8_t  dr = ATA_MASTER;
+
+    uint8_t cmd = 0xE0;
+    uint8_t slavebit = 0x00;
+
+    outportb(io + ATA_REG_CONTROL, 0x02);
+
+    ide_400ns_delay(io);
+    outportb(io + ATA_REG_HDDEVSEL, (cmd | (uint8_t)((lba >> 24 & 0x0F))));
+    ide_400ns_delay(io);
+    outportb(io + 1, 0x00);
+    asm volatile("nop");
+    outportb(io + ATA_REG_SECCOUNT0, 1);
+    asm volatile("nop");
+    outportb(io + ATA_REG_LBA0, (uint8_t)(lba));
+    asm volatile("nop");
+    outportb(io + ATA_REG_LBA1, (uint8_t)(lba >> 8));
+    asm volatile("nop");
+    outportb(io + ATA_REG_LBA2, (uint8_t)(lba >> 16));
+    asm volatile("nop");
+    outportb(io + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
+    asm volatile("nop");
+
+    ide_poll(io);
+
+    ide_400ns_delay(io);
+
+    for (int i = 0; i < 256; i++) {
+        outportw(io + ATA_REG_DATA, buf[i]);
+        asm volatile("nop");
+    }
+
+    outportb(io + 0x07, ATA_CMD_CACHE_FLUSH);
+
+    ide_400ns_delay(io);
+
+    return;
+}
+
+int
+ata_write(struct device *dev, void *buf, size_t count)
+{
+    unsigned long pos = dev->pos;
+
+    DISABLE_IRQ();
+    for (int i = 0; i < count; i++)
+    {
+        ata_write_one_sector(buf, pos + i);
+        buf += 512;
+        for (int j = 0; j < 1000; j ++)
+            ;
+    }
+    dev->pos += count;
+    ENABLE_IRQ();
+    return count;
 }
 
 int
@@ -146,6 +208,7 @@ ide_identify(void)
         free(ide_buf);
 
         dev->read = ata_read;
+        dev->write = ata_write;
         dev->pos = 0;
         dev->type = DEV_TYPE_BLOCK;
         dev->priv = NULL;

@@ -79,6 +79,13 @@ bitmap_create_in_buf(size_t bit_cnt, void *block, size_t block_size __unused)
 	return b;
 }
 
+void
+bitmap_create_using_buffer(size_t bit_cnt, void *buffer, struct bitmap *bmp)
+{
+    bmp->bit_cnt = bit_cnt;
+    bmp->bits = buffer;
+}
+
 /* Returns the number of bytes required to accomodate a bitmap
    with BIT_CNT bits (for use with bitmap_create_in_buf()). */
 size_t

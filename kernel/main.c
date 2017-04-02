@@ -12,6 +12,7 @@
 #include <levos/ata.h>
 #include <levos/elf.h>
 #include <levos/spinlock.h>
+#include <levos/ext2.h> /* TODO remove */
 
 void
 bss_init(void)
@@ -86,7 +87,7 @@ do_first_init()
     map_page_curr(p, VIRT_BASE - 4096, 1);
 
     /* map it in the kernel */
-    map_page_curr(p, (unsigned long)0xD0000000 - 0x1000, 1);
+    map_page_curr(p, (unsigned long)0xD0000000 - 0x1000, 0);
     __flush_tlb();
 
     /* zero it */
@@ -130,8 +131,18 @@ init_task(void)
 
     /* open the init executable */
     struct file *f = vfs_open("/init");
-    if (!f)
+    if ((int) f < 0 && (int)f > -4096)
         panic("no /init found, please reboot\n");
+
+    /* do some @TODO testing */
+    struct ext2_inode inode;
+    int ino = ext2_new_inode(f->fs, &inode);
+    printk("created new inode %d\n", ino);
+    struct ext2_dir *dirent = ext2_new_dirent(ino, "lev");
+    printk("Created new dirent, now placing it in root\n");
+    ext2_place_dirent(f->fs, 2, dirent);
+    /*int block = ext2_alloc_block(f->fs);
+    printk("Ext2 allocated block %d\n", block);*/
 
     /* create a new page directory */
     current_task->mm = new_page_directory();

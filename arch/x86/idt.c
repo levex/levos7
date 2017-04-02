@@ -16,7 +16,7 @@ static intr_handler_func *intr_handlers[INTR_CNT];
 struct task *current_task;
 
 void __noreturn
-gpf(struct pt_regs *regs)
+handle_kernel_prot_fault(struct pt_regs *regs)
 {
    printk("\n");
    printk("--[cut here]--\n");
@@ -33,6 +33,26 @@ gpf(struct pt_regs *regs)
    if (current_task)
     printk("pid=%d\n", current_task->pid);
    panic("General protection fault\n");
+   __not_reached();
+}
+
+void __noreturn
+handle_user_prot_fault(struct pt_regs *regs)
+{
+    printk("User process %d has GPF'd, sending a signal\n", current_task->pid);
+    send_signal(current_task, SIGSEGV);
+    while(1);
+}
+
+void __noreturn
+gpf(struct pt_regs *regs)
+{
+   if (regs->eip > VIRT_BASE) {
+       handle_kernel_prot_fault(regs);
+       __not_reached();
+   }
+
+   handle_user_prot_fault(regs);
 }
 
 void

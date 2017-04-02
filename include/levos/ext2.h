@@ -97,6 +97,7 @@ struct ext2_priv_data {
 struct filesystem *ext2_mount(struct device *);
 struct file *ext2_open(struct filesystem *, char *);
 int ext2_init();
+int ext2_write_superblock(struct filesystem *);
 
 
 #define EXT2_PRIV(fs) ((struct ext2_priv_data *)((fs)->priv_data))
@@ -109,8 +110,13 @@ extern int ext2_read_directory(struct filesystem *, int, char *);
 
 /* inode */
 extern int ext2_read_inode(struct filesystem *, struct ext2_inode *, int);
+extern int ext2_write_inode(struct filesystem *, struct ext2_inode *, int);
+extern int ext2_new_inode(struct filesystem *, struct ext2_inode *);
+int ext2_inode_add_block(struct filesystem *, int, void *);
 
 /* block */
 extern int ext2_read_block(struct filesystem *, void *, uint32_t);
+extern int ext2_write_block(struct filesystem *, void *, uint32_t);
+extern int ext2_alloc_block(struct filesystem *);
 
 #endif

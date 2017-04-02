@@ -48,6 +48,19 @@ struct filesystem *ext2_mount(struct device *dev)
     return fs;
 }
 
+int
+ext2_write_superblock(struct filesystem *fs)
+{
+    void *buffer = &EXT2_PRIV(fs)->sb;
+    dev_seek(fs->dev, 2);
+    if (!fs->dev->write) {
+        printk("[ext2]: CRIRTICAL: ROFS\n");
+        return -EROFS;
+    }
+    fs->dev->write(fs->dev, buffer, 2);
+    printk("[ext2]: WARNING: writing superblock has been done\n");
+}
+
 int ext2_init()
 {
     printk("ext2: registered filesystem to vfs\n");

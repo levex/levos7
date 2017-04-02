@@ -20,6 +20,9 @@ extern void *_kernel_end, *_kernel_start;
 #include <levos/types.h>
 #include <levos/heap.h>
 #include <levos/errno.h>
+#include <levos/limits.h>
+
+#define ROUND_DOWN(x, s) ((x) & ~((s)-1))
 
 void printk(char *, ...);
 void __noreturn panic(char *, ...);

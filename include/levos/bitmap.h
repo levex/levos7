@@ -32,6 +32,7 @@ struct bitmap *bitmap_create (size_t bit_cnt);
 struct bitmap *bitmap_create_in_buf (size_t bit_cnt, void *, size_t byte_cnt);
 size_t bitmap_buf_size (size_t bit_cnt);
 void bitmap_destroy (struct bitmap *);
+void bitmap_create_using_buffer(size_t, void *, struct bitmap *);
 
 /* Bitmap size. */
 size_t bitmap_size (const struct bitmap *);
