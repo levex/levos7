@@ -51,16 +51,26 @@ kmap_get_free_address(void)
 }
 
 void *
+kmap_map_page(uint32_t phys)
+{
+    void *vaddr = kmap_get_free_address();
+    map_page_kernel(phys, (uint32_t) vaddr, 1);
+    __flush_tlb();
+
+    return vaddr;
+}
+
+void *
 kmap_get_page(void)
 {
     void *vaddr = kmap_get_free_address();
-    void *paddr = palloc_get_page();
+    void *paddr = (void *) palloc_get_page();
 
     //printk("kmap: hello, you are 0x%x\n", __builtin_return_address(0));
 
     printk("kmap: paddr 0x%x -> vaddr 0x%x\n", paddr, vaddr);
 
-    map_page_kernel(paddr, vaddr, 1);
+    map_page_kernel((uint32_t) paddr, (uint32_t) vaddr, 1);
     __flush_tlb();
 
     return vaddr;

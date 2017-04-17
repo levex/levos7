@@ -11,7 +11,15 @@
 #include <levos/fs.h>
 #include <levos/ata.h>
 #include <levos/elf.h>
+#include <levos/packet.h>
 #include <levos/spinlock.h>
+#include <levos/work.h>
+#include <levos/pci.h>
+#include <levos/arp.h>
+#include <levos/socket.h>
+#ifdef CONFIG_TCP_TEST
+# include <levos/tcp.h>
+#endif
 #include <levos/ext2.h> /* TODO remove */
 
 void
@@ -99,7 +107,7 @@ do_first_init()
     /* TSS */
     tss_update(current_task);
 
-    current_task->sys_regs = VIRT_BASE;
+    current_task->sys_regs = (void *) VIRT_BASE;
     current_task->regs = 0;
 
     asm volatile (""
@@ -135,11 +143,11 @@ init_task(void)
         panic("no /init found, please reboot\n");
 
     /* do some @TODO testing */
-    struct ext2_inode inode;
+    /*struct ext2_inode inode;
     int ino = ext2_new_inode(f->fs, &inode);
-    printk("created new inode %d\n", ino);
+    //printk("created new inode %d\n", ino);
     struct ext2_dir *dirent = ext2_new_dirent(ino, "lev");
-    printk("Created new dirent, now placing it in root\n");
+    //printk("Created new dirent, now placing it in root\n");
     ext2_place_dirent(f->fs, 2, dirent);
     /*int block = ext2_alloc_block(f->fs);
     printk("Ext2 allocated block %d\n", block);*/
@@ -170,7 +178,22 @@ late_init(void)
 
     vfs_init();
 
+    net_init();
+
+    struct task *pkthndlr = create_kernel_task(packet_processor_thread);
+    sched_add_rq(pkthndlr);
+    sched_yield();
+
     do_mount();
+
+    work_init();
+
+    pci_init();
+
+#ifdef CONFIG_TCP_TEST
+    struct net_info *ni = &net_get_default()->ndev_ni;
+    test_tcp(ni);
+#endif
 
     /* use condvar */
     spin_unlock(&setup_lock);

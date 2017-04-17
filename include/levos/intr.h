@@ -9,4 +9,9 @@ typedef void intr_handler_func (struct pt_regs *);
 void intr_register_hw(uint8_t, intr_handler_func *);
 void intr_register_sw(uint8_t, int, int, intr_handler_func *);
 void intr_register_user(uint8_t, intr_handler_func *);
+
+void intr_set_priv(uint8_t, void *);
+
+void *intr_get_priv(uint8_t);
+
 #endif /* __LEVOS_INTR_H */

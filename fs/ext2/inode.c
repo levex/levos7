@@ -135,7 +135,7 @@ ext2_new_inode(struct filesystem *fs, struct ext2_inode *inode)
     inode->ossv1 = 0;
     /* we dont have any blocks yet */
     memset(&inode->dbp, 0, sizeof(inode->dbp));
-    printk("sizeof(inode->dbp): %d\n", sizeof(inode->dbp));
+    //printk("sizeof(inode->dbp): %d\n", sizeof(inode->dbp));
     inode->singly_block = 0;
     inode->doubly_block = 0;
     inode->triply_block = 0;
@@ -144,12 +144,12 @@ ext2_new_inode(struct filesystem *fs, struct ext2_inode *inode)
     inode->reserved2 = 0;
     inode->fragment_block = 0;
     memset(&inode->ossv2, 0, sizeof(inode->ossv2));
-    printk("sizeof(inode->ossv2): %d\n", sizeof(inode->ossv2));
+    //printk("sizeof(inode->ossv2): %d\n", sizeof(inode->ossv2));
 
     /* write the new inode */
     ext2_write_inode(fs, inode, ino);
 
-    printk("writing inode %d\n", ino);
+    //printk("writing inode %d\n", ino);
 
     /* return the inode number */
     return ino;
@@ -206,7 +206,7 @@ ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
     struct ext2_priv_data *p = EXT2_PRIV(fs);
     uint32_t *block_buf;
 
-    printk("trying to add a block to inode %d\n", ino);
+    //printk("trying to add a block to inode %d\n", ino);
     
     /* allocate the block */
     block_no = ext2_alloc_block(fs);

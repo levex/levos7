@@ -1,19 +1,30 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <sys/utsname.h>
 
 #define STRCMP(c, s, n) strlen(c) == n && strncmp(c, s, n)
 
+char *the_prompt = "lOS $ ";
+
 void
 process_cmd(char *b)
 {
+    pid_t pid;
+    int rc;
     if (STRCMP(b, "fork", 4) == 0) {
-        if (fork()) {
+        if (pid = fork()) {
+            int status;
+
             /* parent */
-            printf("parent\n");
+            //printf("parent\n");
+            rc = waitpid(pid, &status, 0);
+            //printf("PARENT PID %d STATUS 0x%x rc %d errno %d\n", pid, status, rc, errno);
             return;
         } else {
+            //memcpy(the_prompt, "oops $ ", 7);
+
             /* child */
             //printf("child\n");
             execve("/lol", 0, 0);
@@ -46,7 +57,7 @@ main(void)
     while (1) {
         volatile char c = 0;
 prompt:
-        printf("lOS $ ");
+        printf(the_prompt);
         //write(1, "lOS $ ", 6);
 read_more:
         read(0, (char *) &c, 1);

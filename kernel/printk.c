@@ -1,5 +1,7 @@
 #include <levos/kernel.h>
 #include <levos/console.h>
+#include <levos/ip.h>
+#include <levos/eth.h>
 
 #include <stdarg.h>
 
@@ -16,7 +18,7 @@ void vprintk(char *fmt, va_list ap)
                     s = va_arg(ap, char *);
                     if (s == NULL)
                         console_puts("(null)");
-                    else if (s < 0x1000)
+                    else if ((unsigned int) s < 0x1000)
                         console_puts("(weird null)");
                     else
                         console_puts(s);
@@ -36,6 +38,24 @@ void vprintk(char *fmt, va_list ap)
                     itoa(c, 16, str);
                     console_puts(str);
                     i++;
+                    break;
+                }
+                case 'p': {
+                    int c = fmt[i + 2];
+                    switch (c) {
+                        case 'E': {/* eth addr */
+                            char *ptr = va_arg(ap, char *);
+                            printk_print_eth_addr(ptr);
+                            i += 2;
+                            break;
+                        }
+                        case 'I': { /* ip addr */
+                            uint32_t ptr = va_arg(ap, uint32_t);
+                            printk_print_ip_addr(ptr);
+                            i += 2;
+                            break;
+                        }
+                    }
                     break;
                 }
                 case 'c': {

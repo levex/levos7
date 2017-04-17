@@ -21,14 +21,20 @@ struct file_operations {
     size_t (*read)(struct file *, void *, size_t);
     size_t (*write)(struct file *, void *, size_t);
     int (*fstat)(struct file *, struct stat *);
+    int (*close)(struct file *);
 };
+
+#define FILE_TYPE_NORMAL 0
+#define FILE_TYPE_SOCKET 1
 
 struct file {
     struct file_operations *fops;
     struct filesystem *fs;
     int fpos;
     int isdir;
+    int type;
     char *respath;
+    void *priv;
 };
 
 struct stat {

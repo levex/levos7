@@ -83,8 +83,10 @@ do_kernel_pagefault(struct pt_regs *regs, uint32_t cr2)
     printk("vector=%x err=%x\n", regs->vec_no, regs->error_code);
     asm volatile("mov %%cr2, %0":"=r"(cr2));
     printk("cr2=0x%x\n", cr2);
-    if (current_task)
+    if (current_task) {
         printk("while executing pid=%d\n", current_task->pid);
+        printk("irq stack [0x%x - 0x%x]\n", current_task->irq_stack_bot, current_task->irq_stack_top);
+    }
 
     panic("Unable to handle kernel paging request\n");
 }
@@ -112,38 +114,53 @@ get_page_from_pgd(pagedir_t pgd, uint32_t vaddr)
 page_t *
 get_page_from_curr(uint32_t vaddr)
 {
-    if (current_task && current_task->mm)
+    if (current_task && current_task->mm) {
+        //printk("fetching page from current\n");
         return get_page_from_pgd(current_task->mm, vaddr);
+    }
     else return get_page_from_pgd(kernel_pgd, vaddr);
 }
 
 void
 do_cow(uint32_t cr2)
 {
-        char *buffer = malloc(4096);
-        uintptr_t p_np;
-        if (!buffer)
-            send_signal(current_task, SIGSEGV);
+    char *buffer = malloc(4096);
+    uintptr_t p_np;
+    uintptr_t the_page = PG_RND_DOWN(cr2);
+    if (!buffer)
+        send_signal(current_task, SIGSEGV);
 
-        memcpy(buffer, (void *) cr2, 4096);
-        p_np = palloc_get_page();
-        replace_page(current_task->mm, PG_RND_DOWN(cr2), 
-                create_pte(p_np, 1, 1));
-        return;
+    memcpy(buffer, (void *) the_page, 4096);
+
+    p_np = palloc_get_page();
+    replace_page(current_task->mm, the_page, create_pte(p_np, 1, 1));
+
+    page_t *page = get_page_from_curr(cr2);
+    pte_mark_writeable(page);
+
+    memcpy((void *) the_page, buffer, 4096);
+
+    free(buffer);
+
+    return;
 }
 
 void
 do_user_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
 {
-    printk("page fault in pid %d at cr2 = 0x%x\n", current_task->pid, cr2);
-    send_signal(current_task, SIGSEGV);
+    //printk("page fault in pid %d at cr2 = 0x%x\n", current_task->pid, cr2);
+    //send_signal(current_task, SIGSEGV);
 
     /* this is likely a nullptr exception */
     if (cr2 < 4096)
         send_signal(current_task, SIGSEGV);
 
     /* if a COW page is written then fetch new page and map */
-    if (pte_is_cow((int) page) && regs->error_code & 2) {
+    if (pte_is_cow(*page)) {
+        /* && regs->error_code & 2 */
+        //printk("page faulted on a COW page\n");
+
+        //send_signal(current_task, SIGSEGV);
         do_cow(cr2);
         return;
     }
@@ -170,17 +187,14 @@ handle_pagefault(struct pt_regs *regs)
     if ((unsigned long) regs->eip > (unsigned long) VIRT_BASE)
         do_kernel_pagefault(regs, cr2);
 
+    page = get_page_from_curr(cr2);
+
     do_user_pagefault(page, regs, cr2);
 }
 
 void __flush_tlb(void)
 {
     asm volatile("movl %%cr3, %%eax; movl %%eax, %%cr3":::"eax","memory");
-}
-
-inline uint32_t kv2p(void *a)
-{
-    return (uint32_t)a - VIRT_BASE;
 }
 
 int
@@ -322,6 +336,30 @@ copy_page_dir(pagedir_t orig)
 }
 
 void
+mark_all_user_pages_cow(pagedir_t pgd)
+{
+    int i, j;
+
+    /* loop throught the pagetables */
+    for (i = 0; i < 768; i ++) {
+        /* if this pagetable exists, then mark it as R/W */
+        if (pgd[i] != 0) {
+            uint32_t *pde_addr = (void *) VIRT_BASE + ((pgd[i] >> PDE_ADDR_SHIFT) << 12);
+            pde_mark_writeable(pde_addr);
+
+            /* now loop through its pages */
+            for (j = 0; j < 1024; j ++) {
+                if (!pte_present(pde_addr[j]) || !pte_writeable(pde_addr[j]))
+                    continue;
+
+                pte_mark_read_only(&pde_addr[j]);
+                pte_mark_cow(&pde_addr[j]);
+            }
+        }
+    }
+}
+
+void
 map_unload_user_pages(pagedir_t pgd)
 {
     /* 767 because the stack needs not be unmapped, we reuse it */
@@ -347,6 +385,18 @@ pte_mark_read_only(page_t *p)
 }
 
 void
+pte_mark_writeable(page_t *p)
+{
+    *p |= (1 << PTE_RW_SHIFT);
+}
+
+int
+pte_writeable(page_t p)
+{
+    return p & (1 << PTE_RW_SHIFT);
+}
+
+void
 pte_mark_cow(page_t *p)
 {
     *p |= 1 << PTE_COW_SHIFT;
@@ -368,6 +418,12 @@ void
 pde_mark_read_only(pde_t *p)
 {
     *p &= ~(1 << PDE_RW_SHIFT);
+}
+
+void
+pde_mark_writeable(pde_t *p)
+{
+    *p |= (1 << PDE_RW_SHIFT);
 }
 
 void

@@ -58,7 +58,7 @@ ext2_write_superblock(struct filesystem *fs)
         return -EROFS;
     }
     fs->dev->write(fs->dev, buffer, 2);
-    printk("[ext2]: WARNING: writing superblock has been done\n");
+    //printk("[ext2]: WARNING: writing superblock has been done\n");
 }
 
 int ext2_init()

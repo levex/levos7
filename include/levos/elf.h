@@ -65,7 +65,7 @@ typedef struct {
     uint32_t sh_info;
     uint32_t sh_addralign;
     uint32_t sh_entsize;
-} elf_section_header_t __packed;
+} __packed elf_section_header_t;
 
 typedef struct {
     uint32_t p_type;
@@ -77,6 +77,8 @@ typedef struct {
     uint32_t p_flags;
     uint32_t p_align;
 } elf_program_header_t;
+
+int exec_elf(void);
 
 
 #endif /* __LEVOS_ELF_H */

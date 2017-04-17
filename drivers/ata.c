@@ -149,7 +149,7 @@ ata_write_one_sector(uint16_t *buf, size_t lba)
 
     ide_400ns_delay(io);
 
-    return;
+    return 0;
 }
 
 int

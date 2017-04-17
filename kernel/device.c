@@ -2,6 +2,7 @@
 #include <levos/device.h>
 
 struct device *block_devices[32];
+struct device *net_devices[32];
 static struct device *other_devices[32];
 
 void

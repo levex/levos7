@@ -6,6 +6,7 @@
 #include <levos/arch.h>
 #include <levos/palloc.h>
 #include <levos/page.h>
+#include <levos/list.h>
 
 #define TIME_SLICE 5
 
@@ -14,6 +15,8 @@ struct task *current_task;
 
 static struct task *all_tasks[128];
 static int last_task;
+
+static struct list zombie_processes;
 
 void __noreturn late_init(void);
 void __noreturn __idle_thread(void);
@@ -40,6 +43,9 @@ sched_init(void)
     uint32_t kernel_stack, new_stack;
 
     printk("sched: init\n");
+
+    list_init(&zombie_processes);
+
     current_task = malloc(sizeof(*current_task));
     if (!current_task)
         panic("Kernel ran out of memory when starting threading\n");
@@ -76,6 +82,33 @@ sched_init(void)
     panic("tasking screwed\n");
 }
 
+struct process *
+process_create(struct task *task)
+{
+    struct process *proc = malloc(sizeof(*proc));
+    if (!proc)
+        return NULL;
+
+    memset(proc, 0, sizeof(*proc));
+
+    proc->pid = task->pid;
+    proc->task = task;
+    list_init(&proc->waiters);
+    return proc;
+}
+
+void
+process_destroy(struct process *proc)
+{
+    free(proc);
+}
+
+void
+process_add_waiter(struct process *proc, struct task *waiter)
+{
+    list_push_back(&proc->waiters, &waiter->wait_elem);
+}
+
 struct task *create_kernel_task(void (*func)(void))
 {
     uint32_t *new_stack, tmp;
@@ -90,6 +123,14 @@ struct task *create_kernel_task(void (*func)(void))
     task->parent = NULL;
     task->exit_code = 0;
     task->mm = kernel_pgd;
+    task->flags = 0;
+    list_init(&task->children_list);
+    task->owner = process_create(task);
+    if (!task->owner) {
+        //free_pid(task->pid);
+        free(task);
+        return NULL;
+    }
     
     /* get a stack for the task, since this is a kernel thread
      * we can use malloc
@@ -103,7 +144,7 @@ struct task *create_kernel_task(void (*func)(void))
 
     new_stack = (uint32_t *)((int)new_stack + 4096);
     task->irq_stack_top = (uint32_t *) (((uint8_t *) malloc(0x1000)) + 0x1000);
-    task->irq_stack_bot = ((uint32_t)task->irq_stack_top) - 0x1000;
+    task->irq_stack_bot = (void *) ((uint32_t)task->irq_stack_top) - 0x1000;
 
     /* setup the stack */
     new_stack -= 16;
@@ -131,7 +172,7 @@ struct task *create_kernel_task(void (*func)(void))
     *--new_stack = 0;    /* edi */
 
     task->regs = (void *) new_stack;
-    task->new_stack = new_stack;
+    task->new_stack = (void *) new_stack;
     return task;
 }
 
@@ -139,13 +180,40 @@ void
 task_block(struct task *task)
 {
     task->state = TASK_BLOCKED;
+    //printk("%s: pid %d\n", __func__, task->pid);
     if (task == current_task)
         sched_yield();
 }
 
 void
+task_sleep(struct task *task, uint32_t ticks)
+{
+    task->wake_time = ticks;
+    task->state = TASK_SLEEPING;
+}
+
+void
+task_kick(struct task *task)
+{
+    //panic_ifnot(task->state == TASK_SLEEPING);
+    task->wake_time = 0;
+    task->state = TASK_PREEMPTED;
+    //printk("sched: kicked task %d\n", task->pid);
+}
+
+void
+sleep(uint32_t ticks)
+{
+    extern uint32_t __pit_ticks;
+    task_sleep(current_task, __pit_ticks + 1 + ticks);
+    sched_yield();
+}
+
+void
 task_unblock(struct task *task)
 {
+    panic_ifnot(task != current_task);
+    //printk("%s: pid %d\n", __func__, task->pid);
     task->state = TASK_PREEMPTED;
 }
 
@@ -164,7 +232,20 @@ setup_filetable(struct task *task)
     /* stdout */
     task->file_table[1] = dup_file(&serial_base_file);
     /* stderr */
-    task->file_table[2] = NULL;
+    task->file_table[2] = dup_file(&serial_base_file);
+}
+
+void
+close_filetable(struct task *task)
+{
+    int i;
+
+    for (i = 0; i < FD_MAX; i ++) {
+        struct file *filp = task->file_table[i];
+
+        if (filp && filp->fops->close)
+            filp->fops->close(filp);
+    }
 }
 
 void
@@ -176,6 +257,30 @@ task_exit(struct task *t)
         panic("Attempting to exit from init\n");
     if (t->pid == 0)
         panic("Kernel bug: Attempting to kill idle/swapper\n");
+
+    //printk("TASK EXIT for %d\n", t->pid);
+
+    /* check if there are waiters */
+    if (!list_empty(&t->owner->waiters)) {
+        struct list_elem *elem;
+        /* wake them up */
+        list_foreach_raw(&t->owner->waiters, elem) {
+            struct task *waiter = list_entry(elem, struct task, wait_elem);
+
+            task_unblock(waiter);
+       }
+    }
+
+    if (t->flags & TFLAG_WAITED)
+        process_destroy(t->owner);
+    else {
+        t->owner->task = NULL;
+        list_push_back(&zombie_processes, &t->owner->elem);
+    }
+
+    close_filetable(t);
+    free(t->irq_stack_bot);
+    free(t);
 }
 
 void
@@ -203,6 +308,9 @@ struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
     task->parent = NULL;
     task->exit_code = 0;
     task->mm = mm;
+    task->flags = 0;
+    task->owner = process_create(task);
+    list_init(&task->children_list);
     
     /* get a stack for the task, since this is a kernel thread
      * we can use malloc
@@ -214,7 +322,7 @@ struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
     }
 
     task->irq_stack_top = (uint32_t *) (((uint8_t *) malloc(0x1000)) + 0x1000);
-    task->irq_stack_bot = ((uint32_t)task->irq_stack_top) - 0x1000;
+    task->irq_stack_bot = (void *) ((uint32_t)task->irq_stack_top) - 0x1000;
 
     map_page(task->mm, p_new_stack, VIRT_BASE - 4096, 1);
     map_page_curr(p_new_stack, 0xD0000000 - 4096, 1);
@@ -257,6 +365,65 @@ struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
     return task;
 }
 
+void
+sched_add_child(struct task *parent, struct task *child)
+{
+    list_push_back(&parent->children_list, &child->children_elem);
+    child->parent = parent;
+    child->owner->ppid = parent->pid;
+}
+
+struct process *
+sched_get_child(struct task *parent, pid_t pid)
+{
+    struct list_elem *elem;
+
+    /* first, check alive children */
+    list_foreach_raw(&parent->children_list, elem) {
+        struct task *task = list_entry(elem, struct task, children_elem);
+
+        if (task->pid == pid)
+            return task->owner;
+    }
+
+    /* no live children with pid, check zombie tasks */
+    list_foreach_raw(&zombie_processes, elem) {
+        struct process *proc = list_entry(elem, struct process, elem);
+
+        if (proc->ppid == parent->pid && proc->pid == pid)
+            return proc;
+    }
+
+    /* nope */
+    return NULL;
+}
+
+int
+task_do_wait(struct task *waiter, struct process *waited)
+{
+    panic_ifnot(waiter == current_task);
+
+    process_add_waiter(waited, waiter);
+
+    task_block(waiter);
+
+    /* we've been woken up! */
+
+#define WAIT(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
+
+    waiter->flags |= TFLAG_WAITED;
+
+    /* figure out what happened */
+    if (waited->task == NULL) {
+        /* the task has exited */
+        //printk("YAY\n");
+        return WAIT((uint8_t) waited->exit_code, 0);
+    } else
+        panic("Unsupported wait!\n");
+
+    return 0xffffffff;
+}
+
 struct task *
 create_user_task(void (*func)(void))
 {
@@ -268,6 +435,8 @@ struct task *
 create_user_task_fork(void (*func)(void))
 {
     pagedir_t mm = copy_page_dir(current_task->mm);
+    mark_all_user_pages_cow(current_task->mm);
+    mark_all_user_pages_cow(mm);
     return create_user_task_withmm(mm, func);
 }
 
@@ -317,12 +486,16 @@ struct task *
 pick_next_task(void)
 {
     //printk("%s\n", __func__);
+    extern uint32_t __pit_ticks;
 retry:
     for (int i = last_task; i < 128; i ++) {
         if (all_tasks[i] != 0) { 
             if (all_tasks[i]->state == TASK_DYING) {
                 task_exit(all_tasks[i]);
                 continue;
+            } else if (all_tasks[i]->state == TASK_SLEEPING &&
+                    all_tasks[i]->wake_time <= __pit_ticks) {
+                all_tasks[i]->state == TASK_PREEMPTED;
             } else if (!task_runnable(all_tasks[i]))
                 continue;
             last_task = i + 1;
@@ -341,6 +514,7 @@ retry:
 void
 intr_yield(struct pt_regs *r)
 {
+    DISABLE_IRQ();
     current_task->regs = r;
     reschedule();
 }
@@ -372,6 +546,7 @@ reschedule(void)
                  "movw $0x20, %%dx;"
                  "movb $0x20, %%al;"
                  "outb %%al, %%dx;"
+                 "sti;"
                  "jmp intr_exit"::"r"(next->regs));
     __not_reached();
 }

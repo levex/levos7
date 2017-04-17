@@ -28,6 +28,7 @@ void printk(char *, ...);
 void __noreturn panic(char *, ...);
 
 #define panic_on(cond, fmt, ...) if (cond) panic(fmt,##__VA_ARGS__);
+#define panic_ifnot(cond) if (!(cond)) panic("assertion failed: %s \n", #cond);
 
 #define offsetof(st, m) ((size_t)&(((st *)0)->m))
 #define container_of(ptr, type, member) ({ \

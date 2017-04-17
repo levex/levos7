@@ -26,7 +26,13 @@ struct console *arch_get_console(void);
 
 void arch_switch_timer_sched(void);
 
-void arch_spin_lock(int *);
-void arch_spin_unlock(int *);
+void arch_spin_lock(volatile int *);
+void arch_spin_unlock(volatile int *);
+
+void dump_registers(struct pt_regs *);
+
+uint8_t ioportb(uint16_t);
+uint32_t ioportl(uint16_t);
+void outportl(uint16_t, uint32_t);
 
 #endif /* __LEVOS_ARCH_H */

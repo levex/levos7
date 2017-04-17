@@ -11,6 +11,8 @@ static uint64_t idt[INTR_CNT];
 typedef void intr_stub_func (void);
 extern intr_stub_func *intr_stubs[256];
 
+void *intr_data[256];
+
 static intr_handler_func *intr_handlers[INTR_CNT];
 
 struct task *current_task;
@@ -47,12 +49,20 @@ handle_user_prot_fault(struct pt_regs *regs)
 void __noreturn
 gpf(struct pt_regs *regs)
 {
-   if (regs->eip > VIRT_BASE) {
+   if ((uint32_t) regs->eip > VIRT_BASE) {
        handle_kernel_prot_fault(regs);
        __not_reached();
    }
 
    handle_user_prot_fault(regs);
+}
+
+void
+handle_unexpected_irq(struct pt_regs *regs) {
+    DISABLE_IRQ();
+    printk("Oops: Unexpected interrupt: %d\n", regs->vec_no);
+    dump_registers(regs);
+    panic("unexpected interrupt\n");
 }
 
 void
@@ -70,7 +80,9 @@ intr_handler(struct pt_regs *regs)
     intr_handler_func *handler = intr_handlers[regs->vec_no];
     if (handler)
         handler(regs);
-    else panic("Unexpected interrupt in kernel mode: %d\n", regs->vec_no);
+    else {
+        handle_unexpected_irq(regs);
+    }
 
 	if (external)
 		pic_eoi(regs->vec_no);
@@ -133,6 +145,18 @@ void
 intr_register_hw(uint8_t vec_no, intr_handler_func *handler)
 {
     register_handler (vec_no, 0, 0, handler);
+}
+
+void
+intr_set_priv(uint8_t vec_no, void *priv)
+{
+    intr_data[vec_no] = priv;
+}
+
+void *
+intr_get_priv(uint8_t vec_no)
+{
+    return intr_data[vec_no];
 }
 
 void

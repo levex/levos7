@@ -48,12 +48,24 @@ typedef pde_t       *pagedir_t;
 void paging_init(void);
 int map_page(pagedir_t, uint32_t, uint32_t, int);
 int map_page_curr(uint32_t, uint32_t, int);
+int map_page_kernel(uint32_t, uint32_t, int);
 pagedir_t new_page_directory(void);
 pagedir_t copy_page_dir(pagedir_t);
 void replace_page(pagedir_t, uint32_t, pde_t);
 
 void handle_pagefault(struct pt_regs *);
 
+
+page_t *get_page_from_curr(uint32_t);
+
+void pte_mark_read_only(page_t *);
+void pte_mark_writeable(page_t *);
+int pte_present(page_t);
+int pte_writeable(page_t);
+void mark_all_user_pages_cow(pagedir_t);
+
+void pte_mark_cow(page_t *);
+void pde_mark_writeable(pde_t *);
 
 int page_mapped(pagedir_t, uint32_t);
 int page_mapped_curr(uint32_t);
@@ -81,8 +93,20 @@ inline pagedir_t activate_pgd_save(pagedir_t pgd)
     return ret;
 }
 
+inline uint32_t kv2p(void *a)
+{
+    return (uint32_t)a - VIRT_BASE;
+}
+
+inline uint32_t kp2v(void *a)
+{
+    return (uint32_t)a + VIRT_BASE;
+}
+
 void virt_kmap_init(void);
 void *kmap_get_free_address(void);
 void *kmap_get_page(void);
+void *kmap_map_page(uint32_t);
+
 
 #endif /* __LEVOS_PAGE_H */

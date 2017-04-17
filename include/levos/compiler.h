@@ -12,4 +12,6 @@
 #define ___stringify(x) #x
 #define __stringify(x) ___stringify(x)
 
+#define barrier() asm volatile("":::"memory");
+
 #endif

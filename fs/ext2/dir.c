@@ -52,10 +52,10 @@ __minimize_dirent(struct ext2_dir *dirent)
 static inline void
 __maximize_dirent(struct ext2_dir *dirent, int soff, int blocksize)
 {
-    printk("maximizing soff %d start: %d\n", soff, dirent->size);
+    //printk("maximizing soff %d start: %d\n", soff, dirent->size);
     while ((soff + dirent->size) % blocksize)
         dirent->size ++;
-    printk("maximizing end: %d\n", dirent->size);
+    //printk("maximizing end: %d\n", dirent->size);
 }
 
 static struct ext2_dir *
@@ -118,8 +118,8 @@ __ext2_place_dirent(struct filesystem *fs, struct ext2_inode *inode,
             if ((int) before == -1)
                 continue;
 
-            printk("There is enough space after dirent \"%s\" (%d bytes)\n",
-                    (void *) before + sizeof(before) + 1, before->size);
+            //printk("There is enough space after dirent \"%s\" (%d bytes)\n",
+                    //(void *) before + sizeof(before) + 1, before->size);
 
             /* there is enough space to put this dirent after "before" */
 

@@ -308,6 +308,8 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align);
 void *PREFIX(na_malloc)(size_t req_size, size_t align)
 {
     void *ret = __na_malloc(req_size, align);
+    if (ret == NULL)
+        panic("OUT OF MEMORY!\n");
     //printk("%s: ret 0x%x -> 0x%x\n", __func__, ret, ret + req_size);
     return ret;
 }
@@ -842,8 +844,6 @@ void*   PREFIX(na_realloc)(size_t align, void *p, size_t size)
 	struct liballoc_minor *min;
 	unsigned int real_size;
 
-    panic("realloc: align: %d\n");
-	
 	// Honour the case of size == 0 => free old and return NULL
 	if ( size == 0 )
 	{

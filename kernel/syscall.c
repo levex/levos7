@@ -6,6 +6,7 @@
 #include <levos/arch.h>
 #include <levos/errno.h>
 #include <levos/uname.h>
+#include <levos/socket.h>
 
 static void
 syscall_undefined(uint32_t no)
@@ -14,7 +15,7 @@ syscall_undefined(uint32_t no)
 }
 
 static int
-verify_buffer(uint32_t start, size_t sz)
+__verify_buffer(uint32_t start, size_t sz)
 {
     int i;
 
@@ -72,8 +73,14 @@ verify_buffer(uint32_t start, size_t sz)
     return 0;
 }
 
+static int
+verify_buffer(void *p, size_t sz)
+{
+    return __verify_buffer((uint32_t) p, sz);
+}
+
 int
-verify_buffer_string(uint32_t string, int max)
+verify_buffer_string(char *string, int max)
 {
     int i;
     char c;
@@ -215,6 +222,7 @@ sys_exit(int err_code)
 {
     current_task->state = TASK_DYING;
     current_task->exit_code = err_code;
+    current_task->owner->exit_code = err_code;
     //printk("pid %d exited with exit code %d\n", current_task->pid, err_code);
     sched_yield();
     __not_reached();
@@ -244,33 +252,28 @@ sys_write(int fd, char *buf, size_t count)
     return f->fops->write(f, buf, count);
 }
 
-void
-do_fork()
-{
-    while(1);
-}
-
 static int
 sys_fork(void)
 {
     struct task *child;
     struct task *parent = current_task;
     uint32_t addr = VIRT_BASE - 0x1000;//PG_RND_DOWN((int) parent->regs->esp);
-    char *buf = malloc(0x1000);
-    memcpy(buf, addr, 0x1000);
-    uint32_t save = parent->sys_regs;
 
-    child = create_user_task_fork(do_fork);
+    child = create_user_task_fork(NULL);
 
     /* copy stack */
-    memcpy((unsigned int) 0xD0000000 - 0x1000, (unsigned int)VIRT_BASE - 0x1000, 0x1000);
+    memcpy((void *) 0xD0000000 - 0x1000, (void *)VIRT_BASE - 0x1000, 0x1000);
 
     /* copy irq stack */
     memcpy(child->irq_stack_bot, parent->irq_stack_bot, 0x1000);
-    child->regs = ((unsigned long)parent->sys_regs - (unsigned long)parent->irq_stack_bot) + (unsigned long)child->irq_stack_bot;
+
+    /* set the registers to point on their stack */
+    child->regs = (void *) ((unsigned long)parent->sys_regs - (unsigned long)parent->irq_stack_bot) + (unsigned long)child->irq_stack_bot;
     child->regs->eax = 0;
 
+    sched_add_child(parent, child);
     sched_add_rq(child);
+
     return child->pid;
 }
 
@@ -310,10 +313,101 @@ sys_uname(struct uname *un)
 }
 
 int
+sys_socket(int domain, int family, int proto)
+{
+    int i;
+    struct socket *sock;
+    struct file *filp;
+
+    sock = socket_new(domain, family, proto);
+    if (((int) sock) < 0 && ((int)sock) > -4096)
+        return (int) sock;
+
+    filp = file_from_socket(sock);
+    if (!filp) {
+        socket_destroy(sock);
+        return -ENOMEM;
+    }
+
+    for (i = 0; i < FD_MAX; i ++) {
+        if (current_task->file_table[i] == NULL) {
+            current_task->file_table[i] = filp;
+            return i;
+        }
+    }
+
+    return -EMFILE;
+}
+
+int
+sys_connect(int sockfd, void *sockaddr, size_t len)
+{
+    struct file *f;
+    struct socket *sock;
+
+    if (sockfd < 0 || sockfd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[sockfd];
+    if (!f)
+        return -EBADF;
+
+    if (f->type != FILE_TYPE_SOCKET)
+        return -ENOTSOCK;
+
+    if (verify_buffer(sockaddr, len))
+        return -EFAULT;
+
+    sock = f->priv;
+
+    return sock->sock_ops->connect(sock, sockaddr, len);
+}
+
+int
+sys_waitpid(pid_t pid, int *wstatus, int opts)
+{
+    struct process *target;
+
+    if (verify_buffer(wstatus, sizeof(int)))
+        return -EFAULT;
+
+    if (pid == -1) {
+        /* wait for any child */
+    } else if (pid < -1) {
+        /* wait for any child of ABS(pid) */
+    } else if (pid == 0) {
+        /* wait for any child in the current proc group */
+    } else {
+        //printk("CASE 1\n");
+        /* wait for specific child */
+        target = sched_get_child(current_task, pid);
+        if (target == NULL)
+            return -ECHILD;
+
+        //printk("CASE 1a\n");
+
+        if (target->task == NULL) {
+            //printk("CASE 1b\n");
+            /* the task has already finished, return */
+            *wstatus = 0xDEADC0DE; /* TODO */
+            return 0;
+        }
+
+        *wstatus = task_do_wait(current_task, target);
+
+        return 0;
+    }
+
+    return -ENOSYS;
+}
+
+/*
+int
 sys_getdents(int fd, struct dirent *buf, int count)
 {
     return -ENOSYS;
 }
+*/
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
@@ -333,18 +427,24 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_open((char *) a, (int) b, (int) c);
         case 0x6:
             return sys_close((int) a);
+        case 0x7:
+            return sys_waitpid((pid_t) a, (int *) b, (int) c);
         case 0xB:
             return sys_execve((char *) a, (char **) b, (char **) c);
+        case 0x11:
+            return sys_socket((int) a, (int) b, (int) c);
         case 0x12:
             return sys_stat((char *) a, (struct stat *) b);
         case 0x14:
             return sys_getpid();
         case 0x1c:
             return sys_fstat((int) a, (struct stat *) b);
+        case 0x1f:
+            return sys_connect((int) a, (void *) b, (size_t) c);
         case 0x6d:
             return sys_uname((struct uname *) a);
-        case 0x8d:
-            return sys_getdents((int) a, (struct dirent *) b, (int) c);
+        //case 0x8d:
+            //return sys_getdents((int) a, (struct dirent *) b, (int) c);
     }
 
     syscall_undefined(no);

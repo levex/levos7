@@ -8,16 +8,35 @@ extern void *_text_end;
 extern void *_text_start;
 
 void
-dump_stack(int maxframes)
+dumb_dump_stack(int maxframes)
 {
     unsigned int *ebp = &maxframes;
     printk("Stack trace:\n");
     for (int i = 0; i < maxframes; i++) {
-        if (*ebp > &_text_start && *ebp < &_text_end) {
+        if (*ebp > (uint32_t)&_text_start && *ebp < (uint32_t)&_text_end) {
             printk("  0x%x     \n", *ebp);
         }
 
         ebp ++;
+    }
+}
+
+void
+dump_stack(int maxframes)
+{
+    unsigned int *ebp = &maxframes - 2;
+    printk("Stack trace:\n");
+    for(unsigned int frame = 0; frame < maxframes; ++frame)
+    {
+        unsigned int eip = ebp[1];
+        if (eip < (unsigned int)&_text_start || eip > (unsigned int)&_text_end)
+            break;
+        if (eip == 0)
+            // No caller on stack
+            break;
+        ebp = (unsigned int *)(ebp[0]);
+        unsigned int *arguments = &ebp[2];
+        printk("  0x%x\n", eip);
     }
 }
 
@@ -31,7 +50,7 @@ panic(char *fmt, ...)
     printk("*** Kernel panic: ");
     vprintk(fmt, ap);
 
-    dump_stack(64);
+    dump_stack(8);
 
     va_end(ap);
 

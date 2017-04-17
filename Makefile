@@ -1,5 +1,6 @@
 KERN_NAME=kernel.img
 KERN_SYM=kernel.sym
+LEVOS_CONFIG_FILE=LConfig
 ARCH=x86
 
 QEMU_OPTS=-serial stdio -no-reboot
@@ -30,7 +31,9 @@ debug: $(KERN_NAME)
 
 include arch/$(ARCH)/Makefile
 
-CFLAGS += -Iinclude -D__LEVOS_ARCH_$(ARCH)__
+LEVOS_CONFIG_DEFS=$(shell ./gen_config_line.py < $(LEVOS_CONFIG_FILE))
+
+CFLAGS += -Iinclude -D__LEVOS_ARCH_$(ARCH)__ $(LEVOS_CONFIG_DEFS) -fno-omit-frame-pointer
 CFLAGS += -g
 
 %.o: %.c
@@ -54,7 +57,7 @@ preprocess: $(KERN_NAME)
 	# -T arch/$(ARCH)/linker.ld $(OBJS)
 
 clean:
-	-rm $(OBJS)
-	-rm $(KERN_NAME)
+	-@rm $(OBJS) >/dev/null 2>&1|| true
+	-@rm $(KERN_NAME) >/dev/null 2>&1 || true
 
 include Make.dep

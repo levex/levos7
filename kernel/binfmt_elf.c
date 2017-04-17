@@ -127,7 +127,7 @@ load_elf(struct file *f)
                 sh[i].sh_flags & SHF_ALLOC &&
                 sh[i].sh_flags & SHF_WRITE)
         {
-            memset(sh[i].sh_addr, 0, sh[i].sh_size);
+            memset((void *) sh[i].sh_addr, 0, sh[i].sh_size);
         }
     }
 #endif
@@ -140,13 +140,13 @@ finish:
 int
 exec_elf()
 {
-    uint32_t temp_stack = na_malloc(4096, 4096);
+    uint32_t temp_stack = (uint32_t) na_malloc(4096, 4096);
     if (!temp_stack)
         return -ENOMEM;
-    current_task->bstate.switch_stack = temp_stack;
+    current_task->bstate.switch_stack = (void *) temp_stack;
 
     DISABLE_IRQ();
-    memset(temp_stack, 0, sizeof(temp_stack));
+    memset((void *) temp_stack, 0, sizeof(temp_stack));
     asm volatile("movl %%ebx, %%esp; movl %%ebx, %%ebp; jmp do_exec_elf"
             ::"a"(current_task->bstate.entry),"b"(temp_stack + sizeof(temp_stack)));
 }
