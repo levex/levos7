@@ -685,9 +685,6 @@ void PREFIX(na_free)(size_t align, void *ptr)
 	struct liballoc_minor *min;
 	struct liballoc_major *maj;
 
-    /* for now we do not free */
-    return;
-
 	if ( ptr == NULL ) 
 	{
 		l_warningCount += 1;

@@ -54,6 +54,7 @@ sched_init(void)
     current_task->pid = 0;
     current_task->state = TASK_RUNNING;
     current_task->time_ran = 0;
+    signal_init(current_task);
 
     memset(all_tasks, 0, sizeof(struct task *) * 128);
     all_tasks[0] = current_task;
@@ -125,6 +126,7 @@ struct task *create_kernel_task(void (*func)(void))
     task->mm = kernel_pgd;
     task->flags = 0;
     list_init(&task->children_list);
+    signal_init(task);
     task->owner = process_create(task);
     if (!task->owner) {
         //free_pid(task->pid);
@@ -283,17 +285,6 @@ task_exit(struct task *t)
     free(t);
 }
 
-void
-send_signal(struct task *task, int signal)
-{
-    printk("task pid=%d caught signal %s\n", task->pid, signal_to_string(signal));
-    /* for now, just kill */
-    task_exit(task);
-    if (task == current_task)
-        sched_yield();
-    return;
-}
-
 struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
 {
     uint32_t *new_stack, p_new_stack, tmp;
@@ -311,6 +302,7 @@ struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
     task->flags = 0;
     task->owner = process_create(task);
     list_init(&task->children_list);
+    signal_init(task);
     
     /* get a stack for the task, since this is a kernel thread
      * we can use malloc
@@ -409,19 +401,28 @@ task_do_wait(struct task *waiter, struct process *waited)
 
     /* we've been woken up! */
 
-#define WAIT(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
-
     waiter->flags |= TFLAG_WAITED;
 
     /* figure out what happened */
     if (waited->task == NULL) {
         /* the task has exited */
-        //printk("YAY\n");
-        return WAIT((uint8_t) waited->exit_code, 0);
+        return WAIT_EXIT((uint8_t) waited->exit_code);
     } else
         panic("Unsupported wait!\n");
 
     return 0xffffffff;
+}
+
+struct task *
+get_task_for_pid(pid_t pid)
+{
+    int i;
+
+    for (i = 0; i < 128; i ++)
+        if (all_tasks[i] && all_tasks[i]->pid == pid)
+            return all_tasks[i];
+
+    return NULL;
 }
 
 struct task *
@@ -526,20 +527,21 @@ sched_yield()
 }
 
 void
-reschedule(void)
+reschedule_to(struct task *next)
 {
-    if (current_task->state == TASK_RUNNING)
-        current_task->state = TASK_PREEMPTED;
-    struct task *next = pick_next_task();
     next->time_ran = 0;
     next->state = TASK_RUNNING;
     current_task = next;
+    //current_task->sys_regs = current_task->regs;
 
     if (current_task->mm)
         activate_pgd(current_task->mm);
     //else activate_pgd(kernel_pgd);
     
     tss_update(current_task);
+
+    if (task_has_pending_signals(next))
+        signal_handle(next);
 
     /* switch stack */
     asm volatile("movl %0, %%esp;"
@@ -549,6 +551,15 @@ reschedule(void)
                  "sti;"
                  "jmp intr_exit"::"r"(next->regs));
     __not_reached();
+}
+
+void
+reschedule(void)
+{
+    if (current_task->state == TASK_RUNNING)
+        current_task->state = TASK_PREEMPTED;
+    struct task *next = pick_next_task();
+    reschedule_to(next);
 }
 
 void

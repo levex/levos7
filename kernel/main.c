@@ -88,6 +88,10 @@ do_mount(void)
 void
 do_first_init()
 {
+    uint32_t stack = VIRT_BASE;
+    int argc = 0, envc = 0, i;
+    char **argvp = current_task->bstate.argvp;
+    char **envp = current_task->bstate.envp;
     DISABLE_IRQ();
 
     /* map a stack */
@@ -101,6 +105,8 @@ do_first_init()
     /* zero it */
     memset((void *) VIRT_BASE - 0x1000, 0, 0x1000);
 
+    do_args_stack(&stack, argvp, envp);
+
     /* it needs a filetable */
     setup_filetable(current_task);
 
@@ -111,21 +117,25 @@ do_first_init()
     current_task->regs = 0;
 
     asm volatile (""
-            "movl $"__stringify(VIRT_BASE)", %%esp;"
-            "movl $"__stringify(VIRT_BASE)", %%ebp;"
+            //"movl $"__stringify(VIRT_BASE)", %%esp;"
+            //"movl $"__stringify(VIRT_BASE)", %%ebp;"
+            "movl %%eax, %%esp;"
+            "movl %%eax, %%ebp;"
+            "pushl %%eax;"
             "movw $0x23, %%ax;"
             "movw %%ax, %%ds;"
             "movw %%ax, %%es;"
             "movw %%ax, %%fs;"
             "movw %%ax, %%gs;"
+            "popl %%eax;"
             ""
             "pushl $0x23;"
-            "pushl $"__stringify(VIRT_BASE)";"
+            "pushl %%eax;"
             "pushl $0x202;"
             "pushl $0x1b;"
             "pushl %%ebx;"
             "sti;"
-            "iretl"::"b"(current_task->bstate.entry));
+            "iretl"::"a"(stack), "b"(current_task->bstate.entry));
 }
 
 void
@@ -137,27 +147,74 @@ init_task(void)
     spin_lock(&setup_lock);
     sched_yield();
 
+#ifdef CONFIG_PATH_TEST
+    printk("--- path testing enabled ---\n");
+
+    char *test_path_1 = "/bin/sh";
+    char *p = __path_get_path(test_path_1);
+    printk("name: %s path: %s\n", __path_get_name(test_path_1), p);
+    __path_free(p);
+
+    char *test_path_2 = "/";
+    p = __path_get_path(test_path_2);
+    printk("name: %s path: %s\n", __path_get_name(test_path_2), p);
+    __path_free(p);
+
+    char *test_path_3 = "/init";
+    p = __path_get_path(test_path_3);
+    printk("name: %s path: %s\n", __path_get_name(test_path_3), p);
+    __path_free(p);
+
+    char *test_path_4 = "/usr/bin/";
+    p = __path_get_path(test_path_4);
+    printk("name: %s path: %s\n", __path_get_name(test_path_4), p);
+    __path_free(p);
+#endif
+
     /* open the init executable */
     struct file *f = vfs_open("/init");
-    if ((int) f < 0 && (int)f > -4096)
-        panic("no /init found, please reboot\n");
-
-    /* do some @TODO testing */
-    /*struct ext2_inode inode;
+#ifdef CONFIG_EXT2_TEST
+    struct ext2_inode inode;
     int ino = ext2_new_inode(f->fs, &inode);
-    //printk("created new inode %d\n", ino);
+    printk("created new inode %d\n", ino);
     struct ext2_dir *dirent = ext2_new_dirent(ino, "lev");
-    //printk("Created new dirent, now placing it in root\n");
+    printk("Created new dirent, now placing it in root\n");
     ext2_place_dirent(f->fs, 2, dirent);
-    /*int block = ext2_alloc_block(f->fs);
-    printk("Ext2 allocated block %d\n", block);*/
+
+    f = vfs_open("/lev");
+
+    // len: 13
+    char *the_data = "Hello, world!\n";
+    ext2_write_file(f, the_data, strlen(the_data));
+    for (int i = 0; i < 100; i ++) {
+        //printk("--- i = %d ---\n", i);
+        ext2_write_file(f, the_data, strlen(the_data));
+    }
+
+    f = vfs_open("/init");
+#endif
+
+    if (f == NULL || ((int) f < 0 && (int)f > -4096))
+        panic("no /init found, please reboot\n");
 
     /* create a new page directory */
     current_task->mm = new_page_directory();
     activate_pgd(current_task->mm);
 
+    char *init_argvp[] = {
+        "/init",
+        "hello",
+        NULL,
+    };
+
+    char *init_envp[] = {
+        "HOME=/",
+        "USER=root",
+        NULL,
+    };
+
     /* load the ELF file */
-    rc = load_elf(f);
+    rc = load_elf(f, init_argvp, init_envp);
 
     /* if we finished then drop to userspace */
     if (rc == 0)

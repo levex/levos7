@@ -94,6 +94,10 @@ struct ext2_priv_data {
     uint32_t inodes_per_block;
 };
 
+struct ext2_file_priv {
+    int inode_no;
+};
+
 struct filesystem *ext2_mount(struct device *);
 struct file *ext2_open(struct filesystem *, char *);
 int ext2_init();
@@ -101,18 +105,27 @@ int ext2_write_superblock(struct filesystem *);
 
 
 #define EXT2_PRIV(fs) ((struct ext2_priv_data *)((fs)->priv_data))
+#define EXT2_FILE_PRIV(f) ((struct ext2_file_priv *)((f)->priv))
 
 /* file */
 extern int ext2_find_file_inode(struct filesystem *, char *);
 
 /* directory */
 extern int ext2_read_directory(struct filesystem *, int, char *);
+struct ext2_dir *ext2_new_dirent(int, char *);
+int ext2_place_dirent(struct filesystem *, int, struct ext2_dir *);
+struct ext2_dir *dirent_get(struct filesystem *, int, int);
+char *dirent_get_name(struct ext2_dir *);
+void dirent_free(void *);
 
 /* inode */
 extern int ext2_read_inode(struct filesystem *, struct ext2_inode *, int);
 extern int ext2_write_inode(struct filesystem *, struct ext2_inode *, int);
 extern int ext2_new_inode(struct filesystem *, struct ext2_inode *);
-int ext2_inode_add_block(struct filesystem *, int, void *);
+int ext2_inode_add_block(struct filesystem *, int, struct ext2_inode *);
+int ext2_inode_read_or_create(struct filesystem *, int, struct ext2_inode *,
+        int, void *);
+//int ext2_inode_add_block(struct filesystem *, int, void *);
 
 /* block */
 extern int ext2_read_block(struct filesystem *, void *, uint32_t);

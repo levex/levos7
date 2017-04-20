@@ -35,4 +35,21 @@ void __noreturn panic(char *, ...);
             const typeof( ((type *)0)->member ) *__mptr = (ptr); \
             (type *)( (char *)__mptr - offsetof(type,member) );})
 
+inline void *ERR_PTR(long error)
+{
+    return (void *) error;
+}
+
+inline long PTR_ERR(const void *ptr)
+{
+    return (long) ptr;
+}
+
+#define IS_ERR_VALUE(x) ((unsigned long)(void *)(x) >= (unsigned long)-MAX_ERRNO)
+
+inline long IS_ERR(const void *ptr)
+{
+    return IS_ERR_VALUE((unsigned long) ptr);
+}
+
 #endif /* __LEVOS_KERNEL_H */

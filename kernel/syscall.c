@@ -6,7 +6,11 @@
 #include <levos/arch.h>
 #include <levos/errno.h>
 #include <levos/uname.h>
+#include <levos/signal.h>
 #include <levos/socket.h>
+
+#define ARGS_MAX 16
+#define ENVS_MAX 16
 
 static void
 syscall_undefined(uint32_t no)
@@ -114,6 +118,42 @@ verify_buffer_string(char *string, int max)
     return 1;
 }
 
+char **
+copy_array_from_user(char **ptr, int max)
+{
+    int c = 0, i = 0;
+    int len = 0, sofar = 0;
+    char *buf = NULL;
+    char **arr = NULL;
+
+    /* FIXME: proper check */
+
+    for (c = 0; ptr[c] != NULL; c ++)
+        len += strlen(ptr[c]) + 2;
+
+    //printk("%s total len %d\n", __func__, len);
+
+    buf = malloc(len);
+    if (!buf)
+        return ERR_PTR(-ENOMEM);
+
+    arr = malloc((c + 1) * sizeof(uintptr_t));
+    if (!arr) {
+        free(buf);
+        return ERR_PTR(-ENOMEM);
+    }
+    memset(arr, 0, (c + 1) * sizeof(uintptr_t));
+
+    for (i = 0; i < c; i ++) {
+        memcpy(buf + sofar, ptr[i], strlen(ptr[i]) + 1);
+        //printk("buf+sofar(%d) is %s\n", sofar, buf + sofar);
+        arr[i] = buf + sofar;
+        sofar += strlen(ptr[i]) + 1;
+    }
+
+    return arr;
+}
+
 
 static int
 sys_open(char *filename, int flags, int mode)
@@ -126,18 +166,59 @@ sys_open(char *filename, int flags, int mode)
         return -EFAULT;
 
     f = vfs_open(filename);
+    if (IS_ERR(f)) {
+        int err = PTR_ERR(f);
+        printk("err is %s\n", errno_to_string(err));
+        if (err == -ENOENT) {
+            if (flags & O_CREAT) {
+                f = vfs_create(filename);
+                if (IS_ERR(f)) {
+                    printk("FATAL\n");
+                    return PTR_ERR(f);
+                }
 
-    if (f == NULL || (int)f == -ENOENT)
-        return -ENOENT;
+                goto xc;
+            }
 
+            return -ENOENT;
+        }
+
+        return err;
+    }
+
+    if (f->isdir && (flags & O_WRONLY || flags & O_RDWR))
+        return -EISDIR;
+    
+    if (flags & O_EXCL && flags & O_CREAT) {
+        vfs_close(f);
+        return -EEXIST;
+    }
+
+xc:
     for (i = 0; i < FD_MAX; i ++) {
         if (task->file_table[i] == NULL) {
             task->file_table[i] = f;
+            f->refc ++;
             return i;
         }
     }
     
-    return -ENFILE;
+    return -EMFILE;
+}
+
+static int
+do_close(int fd)
+{
+    struct file *f = current_task->file_table[fd];
+    f->refc --;
+
+    current_task->file_table[fd] = NULL;
+    if (f->refc == 0) {
+        if (f->fops->close)
+            f->fops->close(f);
+    }
+
+    return 0;
 }
 
 static int
@@ -149,8 +230,7 @@ sys_close(int fd)
     if (!current_task->file_table[fd])
         return -EBADF;
 
-    current_task->file_table[fd] = NULL;
-    return 0;
+    return do_close(fd);
 }
 
 static int
@@ -209,7 +289,15 @@ sys_execve(char *fn, char **argvp, char **envp)
 
     __flush_tlb();
 
-    rc = load_elf(f);
+    argvp = copy_array_from_user(argvp, ARGS_MAX);
+    if (IS_ERR(argvp) && PTR_ERR(argvp) == -EFAULT)
+        return -EFAULT;
+
+    envp = copy_array_from_user(envp, ENVS_MAX);
+    if (IS_ERR(envp) && PTR_ERR(envp) == -EFAULT)
+        return -EFAULT;
+
+    rc = load_elf(f, argvp, envp);
     if (rc)
         return rc;
 
@@ -371,6 +459,10 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
     if (verify_buffer(wstatus, sizeof(int)))
         return -EFAULT;
 
+    /* TODO: support the opts field */
+    if (opts != 0)
+        return -EINVAL;
+
     if (pid == -1) {
         /* wait for any child */
     } else if (pid < -1) {
@@ -378,18 +470,14 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
     } else if (pid == 0) {
         /* wait for any child in the current proc group */
     } else {
-        //printk("CASE 1\n");
         /* wait for specific child */
         target = sched_get_child(current_task, pid);
         if (target == NULL)
             return -ECHILD;
 
-        //printk("CASE 1a\n");
-
         if (target->task == NULL) {
-            //printk("CASE 1b\n");
             /* the task has already finished, return */
-            *wstatus = 0xDEADC0DE; /* TODO */
+            *wstatus = WAIT_EXIT(target->exit_code);
             return 0;
         }
 
@@ -401,13 +489,150 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
     return -ENOSYS;
 }
 
-/*
 int
-sys_getdents(int fd, struct dirent *buf, int count)
+sys_lseek(int fd, size_t off, int whence)
 {
-    return -ENOSYS;
+    struct file *f;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    if (whence == SEEK_SET)
+        f->fpos = off;
+    else if (whence == SEEK_CUR)
+        f->fpos += off;
+    else if (whence == SEEK_END)
+        f->fpos = 0; /* FIXME */
+
+    /* FIXME: pipe support missing */
+
+    return -EINVAL;
 }
-*/
+
+int
+sys_dup(int fd)
+{
+    struct file *f;
+    int i;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    for (i = 0; i < FD_MAX; i ++) {
+        if (current_task->file_table[i] == NULL) {
+            current_task->file_table[i] = f;
+            f->refc ++;
+            return i;
+        }
+    }
+}
+
+int
+sys_dup2(int fd, int to)
+{
+    struct file *f, *f2;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    if (to < 0 || to >= FD_MAX)
+        return -EBADF;
+
+    if (fd == to)
+        return to;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    f2 = current_task->file_table[to];
+    if (f2)
+        do_close(to);
+
+    current_task->file_table[to] = f;
+    return to;
+}
+
+int
+sys_readdir(int fd, struct linux_dirent *buf, int count)
+{
+    struct file *f;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    if (!f->isdir)
+        return -ENOTDIR;
+
+    if (verify_buffer(buf, sizeof(struct linux_dirent)))
+        return -EFAULT;
+
+    return f->fops->readdir(f, buf);
+}
+
+int
+sys_signal(int signum, sighandler_t handler)
+{
+    if (!signal_is_signum_valid(signum))
+        return -EINVAL;
+
+    signal_register_handler(current_task, signum, handler);
+
+    return 0;
+}
+
+int
+sys_kill(int pid, int sig)
+{
+    if (sig == 0) {
+        struct task *task = get_task_for_pid(pid);
+        if (task)
+            return 0;
+        return -ESRCH;
+    }
+
+    if (sig < MIN_SIG || sig > MAX_SIG)
+        return -EINVAL;
+
+    if (pid == 0) {
+        /* FIXME: when process grouping is implemented, send to
+         * the calling process' group
+         */
+        return -ENOSYS;
+    }
+
+    if (pid > 0) {
+        struct task *task = get_task_for_pid(pid);
+        send_signal(task, sig);
+        return 0;
+    }
+
+    if (pid == -1) {
+        /* XXX: send to every process we have permission */
+        return 0;
+    }
+
+    if (pid < -1) {
+        int pgid = -pid;
+        /* XXX: send to every process in PG %pgid */
+        return 0;
+    }
+    
+    __not_reached();
+}
+
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
@@ -435,16 +660,26 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_socket((int) a, (int) b, (int) c);
         case 0x12:
             return sys_stat((char *) a, (struct stat *) b);
+        case 0x13:
+            return sys_lseek((int) a, (size_t) b, (int) c);
         case 0x14:
             return sys_getpid();
         case 0x1c:
             return sys_fstat((int) a, (struct stat *) b);
         case 0x1f:
             return sys_connect((int) a, (void *) b, (size_t) c);
+        case 0x25:
+            return sys_kill((int) a, (int) b);
+        case 0x29:
+            return sys_dup((int) a);
+        case 0x30:
+            return sys_signal((int) a, (sighandler_t) b);
+        case 0x3f:
+            return sys_dup2((int) a, (int) b);
+        case 0x59:
+            return sys_readdir((int) a, (struct linux_dirent *) b, (int) c);
         case 0x6d:
             return sys_uname((struct uname *) a);
-        //case 0x8d:
-            //return sys_getdents((int) a, (struct dirent *) b, (int) c);
     }
 
     syscall_undefined(no);

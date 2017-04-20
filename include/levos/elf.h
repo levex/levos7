@@ -5,7 +5,8 @@
 #include <levos/compiler.h>
 #include <levos/fs.h>
 
-int load_elf(struct file *);
+int load_elf(struct file *, char **, char **);
+void do_args_stack(uint32_t *, char **, char **);
 
 inline const char *elf_type_as_string(uint8_t t)
 {

@@ -11,7 +11,7 @@
  * load_elf - load an ELF file into the current address space
  */
 int
-load_elf(struct file *f)
+load_elf(struct file *f, char **argvp, char **envp)
 {
     int valid, pheaders_sz, i;
     char magic[4];
@@ -85,8 +85,7 @@ load_elf(struct file *f)
         }
     }
 
-#define ELF_DO_SECTIONS
-#ifdef ELF_DO_SECTIONS
+#ifdef CONFIG_ELF_DO_SECTIONS
     sh = malloc(header.e_shentsize * header.e_shnum);
     if (!sh) {
         free(ph);
@@ -121,8 +120,10 @@ load_elf(struct file *f)
     // parse section headers
     for (i = 0; i < header.e_shnum; i ++){
         char *name = &strtab[sh[i].sh_name];
-        /*printk("%d Section %s addr %x off %x size %x\n", i, name,
-                    sh[i].sh_addr, sh[i].sh_offset, sh[i].sh_size);*/
+#ifdef CONFIG_ELF_SECTION_DEBUG
+        printk("%d Section %s addr %x off %x size %x\n", i, name,
+                    sh[i].sh_addr, sh[i].sh_offset, sh[i].sh_size);
+#endif
         if (sh[i].sh_type == SHT_NOBITS &&
                 sh[i].sh_flags & SHF_ALLOC &&
                 sh[i].sh_flags & SHF_WRITE)
@@ -134,6 +135,8 @@ load_elf(struct file *f)
 
 finish:
     current_task->bstate.entry = header.e_entry;
+    current_task->bstate.argvp = argvp;
+    current_task->bstate.envp = envp;
     return 0;
 }
 
@@ -148,21 +151,118 @@ exec_elf()
     DISABLE_IRQ();
     memset((void *) temp_stack, 0, sizeof(temp_stack));
     asm volatile("movl %%ebx, %%esp; movl %%ebx, %%ebp; jmp do_exec_elf"
-            ::"a"(current_task->bstate.entry),"b"(temp_stack + sizeof(temp_stack)));
+            ::"a"(&current_task->bstate),"b"(temp_stack + sizeof(temp_stack)));
+}
+
+void
+do_args_stack(uint32_t *stackptr, char **argvp, char **envp)
+{
+    int envc, argc, i;
+    uint32_t stack = *stackptr;
+
+    /* count the env vars */
+    for (envc = 0; envp[envc] != NULL; envc ++)
+        ;
+
+    /* count the arg vars */
+    for (argc = 0; argvp[argc] != NULL; argc ++)
+        ;
+
+    //printk("this has %d env vars and %d args\n", envc, argc);
+
+    /* push the env vars */
+    for (i = envc - 1; i >= 0; i --) {
+        char *curr = envp[i];
+        stack -= strlen(curr) + 1;
+        //printk("pushing curr \"%s\" to [0x%x - 0x%x]\n", curr, stack, stack + strlen(curr) + 1);
+        memcpy((void *) stack, curr, strlen(curr) + 1);
+        envp[i] = (char *) stack;
+    }
+
+    /* align to 4 bytes */
+    while (stack % 4 != 0)
+        *(uint8_t *)(-- stack) = 0;
+
+    /* push the args */
+    for (i = argc - 1; i >= 0; i --) {
+        char *curr = argvp[i];
+        stack -= strlen(curr) + 1;
+        //printk("pushing curr \"%s\" to [0x%x - 0x%x]\n", curr, stack, stack + strlen(curr) + 1);
+        memcpy((void *) stack, curr, strlen(curr) + 1);
+        argvp[i] = (char *) stack;
+    }
+
+    /* align again to 4 bytes */
+    while (stack % 4 != 0)
+        *(uint8_t *)(-- stack) = 0;
+
+    /* push the env locs */
+    *(uint32_t *)(stack -= 4) = NULL;
+    for (i = envc - 1; i >= 0; i --) {
+        //printk("pushing value 0x%x (ct. \"%s\") to 0x%x\n", envp[i], envp[i], stack);
+        *(uint32_t *)(stack -= 4) = (uint32_t) envp[i];
+    }
+    envp = (char **) stack;
+    //printk("envp is now 0x%x\n", envp);
+
+    /* push the arg locs */
+    *(uint32_t *)(stack -= 4) = NULL;
+    for (i = argc - 1; i >= 0; i --) {
+        //printk("pushing value 0x%x (ct. \"%s\") to 0x%x\n", argvp[i], argvp[i], stack);
+        *(uint32_t *)(stack -= 4) = (uint32_t) argvp[i];
+    }
+    argvp = (char **) stack;
+    //printk("argvp is now 0x%x\n", argvp);
+
+    /* push envp */
+    *(uint32_t *)(stack -= 4) = (uint32_t) envp;
+
+    /* push argvp */
+    *(uint32_t *)(stack -= 4) = (uint32_t) argvp;
+
+    /* push argc */
+    *(uint32_t *)(stack -= 4) = argc;
+
+    /* push ret addr */
+    *(uint32_t *)(stack -= 4) = 0xBADC0FEE;
+
+    *stackptr = (uint32_t) stack;
 }
 
 /* POINT OF NO RETURN */
 void
 do_exec_elf(void)
 {
-    uint32_t entry;
-    asm volatile("movl %%eax, %0":"=r"(entry));
+    struct bin_state *bs;
+    asm volatile("movl %%eax, %0":"=r"(bs));
+    uint32_t stack = VIRT_BASE;
 
     uint32_t p = palloc_get_page();
     map_page_curr(p, VIRT_BASE - 4096, 1);
     __flush_tlb();
 
     memset((void *) VIRT_BASE - 0x1000, 0, 0x1000);
-    asm volatile ("movl %%ebx, %%esp; movl %%esp, %%ebp; sti; jmp *%%eax"::"a"(entry),"b"(VIRT_BASE));
+
+    do_args_stack(&stack, bs->argvp, bs->envp);
+
+    asm volatile ( "movl %%eax, %%esp;"
+                   "movl %%eax, %%ebp;"
+                   "pushl %%eax;"
+                   "movw $0x23, %%ax;"
+                   "movw %%ax, %%ds;"
+                   "movw %%ax, %%es;"
+                   "movw %%ax, %%fs;"
+                   "movw %%ax, %%gs;"
+                   "popl %%eax;"
+                   ""
+                   "pushl $0x23;"
+                   "pushl %%eax;"
+                   "pushl $0x202;"
+                   "pushl $0x1b;"
+                   "pushl %%ebx;"
+                   "sti;"
+                   "iretl;"
+                    ::"b"(bs->entry),"a"(stack));
+
     panic("impossible occured\n");
 }

@@ -45,6 +45,8 @@
 #define    ETIMEDOUT     110   /* Connection timed out */
 #define    ECONNREFUSED  111   /* Connection refused */
 
+#define MAX_ERRNO 4095
+
 inline const char *errno_to_string(int errno)
 {
     if (errno == 0)

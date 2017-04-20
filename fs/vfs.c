@@ -156,9 +156,35 @@ int register_fs(struct fs_ops *fs)
 struct file *vfs_open(char *path)
 {
     struct mount *m = find_mount(path);
+
+    //printk("experimental path would be for \"%s\": \"%s\"\n",
+            //path, path + strlen(m->point) - 1);
+
+    /* FIXME: the path is wrong if multiple mounts exist */
     return m->fs->fs_ops->open(m->fs, path);
 }
 
+void
+vfs_close(struct file *f)
+{
+    if (f->fops->close)
+        f->fops->close(f);
+}
+
+struct file *
+vfs_create(char *path)
+{
+    struct mount *m = find_mount(path);
+
+    //printk("experimental path would be for \"%s\": \"%s\"\n",
+            //path, path + strlen(m->point) - 1);
+
+    /* FIXME: the path is wrong if multiple mounts exist */
+    if (m->fs->fs_ops->create)
+        return m->fs->fs_ops->create(m->fs, path);
+
+    return ERR_PTR(-EROFS);
+}
 
 struct file *
 dup_file(struct file *f)

@@ -9,12 +9,18 @@
 #include <levos/signal.h>
 #include <levos/list.h>
 
+
+#define WAIT_CODE(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
+#define WAIT_EXIT(a) WAIT_CODE(a, 0)
+
 typedef int pid_t;
 
 struct bin_state
 {
     uint32_t entry;
     void *switch_stack;
+    char **argvp;
+    char **envp;
 };
 
 struct task;
@@ -62,6 +68,8 @@ struct task
 
     struct bin_state bstate;
 
+    struct signal_struct signal;
+
     /*
      * uh, not sure we need this lock, since only the
      * process will modify its children
@@ -93,9 +101,14 @@ inline int task_runnable(struct task *t)
             t->state == TASK_PREEMPTED;
 }
 int task_do_wait(struct task *, struct process *);
+void task_exit(struct task *t);
 
 struct task *create_user_task_fork(void (*)(void));
 struct task *create_kernel_task(void (*)(void));
+struct task *get_task_for_pid(pid_t);
+
+
+void reschedule_to(struct task *);
 
 void sched_tick(struct pt_regs *);
 void sched_init(void);

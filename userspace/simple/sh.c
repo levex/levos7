@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
+#include <string.h>
+#include <sys/wait.h>
 #include <sys/utsname.h>
 
 #define STRCMP(c, s, n) strlen(c) == n && strncmp(c, s, n)
@@ -13,21 +16,32 @@ process_cmd(char *b)
 {
     pid_t pid;
     int rc;
-    if (STRCMP(b, "fork", 4) == 0) {
+    char *arg;
+    if (strncmp(b, "fork ", 5) == 0) {
+        arg = b + 5;
         if (pid = fork()) {
             int status;
 
             /* parent */
             //printf("parent\n");
             rc = waitpid(pid, &status, 0);
-            //printf("PARENT PID %d STATUS 0x%x rc %d errno %d\n", pid, status, rc, errno);
+            if (WIFEXITED(status))
+                printf("Exit code: %d\n", WEXITSTATUS(status));
+            else
+                printf("Weird!\n");
             return;
         } else {
             //memcpy(the_prompt, "oops $ ", 7);
 
             /* child */
-            //printf("child\n");
-            execve("/lol", 0, 0);
+            printf("child\n");
+            char *argvp[] = {
+                "/lol",
+                arg,
+                NULL,
+            };
+
+            execve("/lol", argvp, environ);
             exit(13);
         }
     }
@@ -47,12 +61,18 @@ process_cmd(char *b)
 }
 
 int
-main(void)
+main(int argc, char **argvp)
 {
     char cmdbuf[128];
     int i = 0;
 
     /* TODO: tty set raw mode */
+
+    memset(cmdbuf, 0, 128);
+    printf("There are %d args\n", argc);
+
+    for (i = 0; i < argc; i ++)
+        printf("arg %d: %s\n", i, argvp[i]);
 
     while (1) {
         volatile char c = 0;

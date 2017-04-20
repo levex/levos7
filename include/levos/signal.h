@@ -1,9 +1,13 @@
 #ifndef __LEVOS_SIGNAL_H
 #define __LEVOS_SIGNAL_H
 
+#include <levos/types.h>
 #include <levos/task.h>
+#include <levos/list.h>
 
 struct task;
+
+#define MIN_SIG      1
 
 #define SIGHUP       1   	/* Hangup (POSIX) */
 #define SIGINT       2       /* Terminal interrupt (ANSI) */
@@ -35,6 +39,39 @@ struct task;
 #define SIGWINCH    28  /* Window size change (4.3 BSD, Sun) */
 #define SIGIO       29      /* I/O now possible (4.2 BSD) */
 #define SIGPWR      30      /* Power failure restart (System V) */
+
+#define MAX_SIG     30
+
+
+#define SIG_DFL ((sighandler_t) 0)
+#define SIG_IGN ((sighandler_t) 1)
+
+typedef void (*sighandler_t)(int);
+
+struct signal {
+    int id;
+    struct list_elem elem;
+    void *data;
+    struct pt_regs context;
+};
+
+
+struct signal_struct {
+    struct list pending_signals;
+
+    char *unused_stack;
+    char *unused_stack_bot;
+    page_t unused_pte;
+    uintptr_t stack_phys_page;
+
+#define SIG_STATE_NULL      0
+#define SIG_STATE_HANDLING  1
+    int sig_state;
+
+    struct signal *current_signal;
+
+    sighandler_t signal_handlers[MAX_SIG];
+};
 
 inline char *signal_to_string(int sig)
 {
@@ -74,7 +111,12 @@ inline char *signal_to_string(int sig)
     }
 }
 
-
+void signal_init(struct task *);
+int signal_is_signum_valid(int);
+void signal_register_handler(struct task *, int, sighandler_t);
 void send_signal(struct task *, int);
+void ret_from_signal(void);
+int task_has_pending_signals(struct task *);
+void signal_handle(struct task *);
 
 #endif /* __LEVOS_SIGNAL_H */

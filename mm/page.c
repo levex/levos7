@@ -8,6 +8,8 @@
 
 pde_t kernel_pgd[1024] __page_align;
 
+static int __in_pagefault;
+
 /* TODO: clean up */
 int pte_is_cow(page_t p);
 
@@ -26,7 +28,7 @@ inline uintptr_t pte_index(uint32_t addr)
 	return (uintptr_t) ((addr / 4096) % 1024);
 }
 
-inline page_t create_pte(uint32_t phys_addr, int user, int rw)
+page_t create_pte(uint32_t phys_addr, int user, int rw)
 {
 	phys_addr = phys_addr >> 12;
 
@@ -91,7 +93,7 @@ do_kernel_pagefault(struct pt_regs *regs, uint32_t cr2)
     panic("Unable to handle kernel paging request\n");
 }
 
-static page_t *
+page_t *
 get_page_from_pgd(pagedir_t pgd, uint32_t vaddr)
 {
     int ipde, ipte;
@@ -100,6 +102,8 @@ get_page_from_pgd(pagedir_t pgd, uint32_t vaddr)
 
     ipde = pde_index(vaddr);
     ipte = pte_index(vaddr);
+
+    //printk("%s: ipde: %d ipte: %d\n", __func__, ipde, ipte);
 
     pde = pdes[ipde];
     pde >>= PDE_ADDR_SHIFT;
@@ -145,15 +149,34 @@ do_cow(uint32_t cr2)
     return;
 }
 
+int
+in_pagefault()
+{
+    return __in_pagefault;
+}
+
 void
 do_user_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
 {
     //printk("page fault in pid %d at cr2 = 0x%x\n", current_task->pid, cr2);
     //send_signal(current_task, SIGSEGV);
+    
+    __in_pagefault = 1;
+
+    //printk("%s: regs: 0x%x\n", __func__, regs);
+    //dump_registers(regs);
+    //current_task->sys_regs = regs;
 
     /* this is likely a nullptr exception */
-    if (cr2 < 4096)
+    if (cr2 < 4096) {
+        printk("unable to handle null dereference at 0x%x\n", cr2);
         send_signal(current_task, SIGSEGV);
+    }
+
+    if (!page) {
+        printk("unable to handle a missing page at 0x%x!\n", cr2);
+        send_signal(current_task, SIGSEGV);
+    }
 
     /* if a COW page is written then fetch new page and map */
     if (pte_is_cow(*page)) {
@@ -167,9 +190,12 @@ do_user_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
 
     /* we faulted on a page that is not mapped */
     page = get_page_from_pgd(current_task->mm, cr2);
-    if (!page)
+    if (!page) {
+        printk("unable to handle user paging request at 0x%x\n", cr2);
         send_signal(current_task, SIGSEGV);
+    }
 
+    printk("unable to handle user paging permission error at 0x%x\n", cr2);
     /* we couldn't handle it, sigsegv */
     send_signal(current_task, SIGSEGV);
     __not_reached();
@@ -183,6 +209,16 @@ handle_pagefault(struct pt_regs *regs)
     page_t *page;
 
     asm volatile("mov %%cr2, %0":"=r"(cr2));
+
+    ///printk("--- pagefault ---\n");
+    //dump_registers(regs);
+
+    if (regs->eip == ret_from_signal) {
+        ret_from_signal();
+        return;
+    }
+
+    current_task->sys_regs = regs;
 
     if ((unsigned long) regs->eip > (unsigned long) VIRT_BASE)
         do_kernel_pagefault(regs, cr2);
