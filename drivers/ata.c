@@ -59,6 +59,46 @@ ide_poll(uint16_t io)
     return;
 }
 
+int
+ata_status_wait(int io_base, int timeout) {
+	int status;
+
+	if (timeout > 0) {
+		int i = 0;
+		while ((status = inportb(io_base + ATA_REG_STATUS)) & ATA_SR_BSY && (i < timeout)) i++;
+	} else {
+		while ((status = inportb(io_base + ATA_REG_STATUS)) & ATA_SR_BSY);
+	}
+	return status;
+}
+
+void
+ata_io_wait(int io_base) {
+	inportb(io_base + ATA_REG_ALTSTATUS);
+	inportb(io_base + ATA_REG_ALTSTATUS);
+	inportb(io_base + ATA_REG_ALTSTATUS);
+	inportb(io_base + ATA_REG_ALTSTATUS);
+}
+
+int
+ata_wait(int io, int adv)
+{
+    uint8_t status = 0;
+
+    ata_io_wait(io);
+
+    status = ata_status_wait(io, -1);
+
+    if (adv) {
+        status = inportb(io + ATA_REG_STATUS);
+        if (status & ATA_SR_ERR) return 1;
+        if (status & ATA_SR_DF)  return 1;
+        if (!(status & ATA_SR_DRQ)) return 1;
+    }
+
+    return 0;
+}
+
 void
 ata_read_one_sector(char *buf, size_t lba)
 {
@@ -66,28 +106,37 @@ ata_read_one_sector(char *buf, size_t lba)
     uint8_t  dr = ATA_MASTER;
 
     uint8_t cmd = 0xE0;
+    int errors = 0;
     uint8_t slavebit = 0x00;
 
     //printk("ata: lba: %d\n", lba);
+try_a:
+    outportb(io + ATA_REG_CONTROL, 0x02);
 
-    ide_400ns_delay(io);
+    ata_wait(io, 0);
+
     outportb(io + ATA_REG_HDDEVSEL, (cmd | (uint8_t)((lba >> 24 & 0x0F))));
-    ide_poll(io);
-    outportb(io + 1, 0x00);
+    outportb(io + ATA_REG_FEATURES, 0x00);
     outportb(io + ATA_REG_SECCOUNT0, 1);
     outportb(io + ATA_REG_LBA0, (uint8_t)(lba));
     outportb(io + ATA_REG_LBA1, (uint8_t)(lba >> 8));
     outportb(io + ATA_REG_LBA2, (uint8_t)(lba >> 16));
     outportb(io + ATA_REG_COMMAND, ATA_CMD_READ_PIO);
 
-    ide_poll(io);
+    if (ata_wait(io, 1)) {
+        errors ++;
+        if (errors > 4)
+            panic("Failed to read ATA block %d\n", lba);
+
+        goto try_a;
+    }
 
     for (int i = 0; i < 256; i++) {
         uint16_t d = inportw(io + ATA_REG_DATA);
         *(uint16_t *)(buf + i * 2) = d;
     }
 
-    ide_400ns_delay(io);
+    ata_wait(io, 0);
     return;
 }
 
@@ -120,34 +169,25 @@ ata_write_one_sector(uint16_t *buf, size_t lba)
 
     outportb(io + ATA_REG_CONTROL, 0x02);
 
-    ide_400ns_delay(io);
+    ata_wait(io, 0);
+
     outportb(io + ATA_REG_HDDEVSEL, (cmd | (uint8_t)((lba >> 24 & 0x0F))));
-    ide_400ns_delay(io);
-    outportb(io + 1, 0x00);
-    asm volatile("nop");
+    ata_wait(io, 0);
+    outportb(io + ATA_REG_FEATURES, 0x00);
     outportb(io + ATA_REG_SECCOUNT0, 1);
-    asm volatile("nop");
     outportb(io + ATA_REG_LBA0, (uint8_t)(lba));
-    asm volatile("nop");
     outportb(io + ATA_REG_LBA1, (uint8_t)(lba >> 8));
-    asm volatile("nop");
     outportb(io + ATA_REG_LBA2, (uint8_t)(lba >> 16));
-    asm volatile("nop");
     outportb(io + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
-    asm volatile("nop");
-
-    ide_poll(io);
-
-    ide_400ns_delay(io);
+    ata_wait(io, 0);
 
     for (int i = 0; i < 256; i++) {
         outportw(io + ATA_REG_DATA, buf[i]);
-        asm volatile("nop");
+        asm volatile("nop; nop; nop");
     }
-
     outportb(io + 0x07, ATA_CMD_CACHE_FLUSH);
 
-    ide_400ns_delay(io);
+    ata_wait(io, 0);
 
     return 0;
 }
