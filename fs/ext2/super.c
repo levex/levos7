@@ -5,12 +5,14 @@
 
 struct filesystem *ext2_mount(struct device *dev);
 int ext2_stat(struct filesystem *, char *, struct stat *);
+struct file *ext2_create_file(struct filesystem *, char *);
 
 struct fs_ops ext2_fs = {
     .fsname = "ext2",
     .mount = ext2_mount,
     .open = ext2_open,
     .stat = ext2_stat,
+    .create = ext2_create_file,
 };
 
 struct filesystem *ext2_mount(struct device *dev)

@@ -114,8 +114,6 @@ ext2_new_inode(struct filesystem *fs, struct ext2_inode *inode)
     /* clear out the buffer */
     memset(inode, 0, sizeof(*inode));
 
-    asm volatile ("":::"memory");
-
     /* by default, we set it to a file */
     /* TODO make this nice */
     inode->type = 0x8000 /* IFREG */| /* make it RWXRWXRWX */ 0x0fff;
@@ -195,11 +193,197 @@ int ext2_write_inode(struct filesystem *fs, struct ext2_inode *buf, int inode)
     return 0;
 }
 
+int
+ext2_inode_get_block(struct filesystem *fs, struct ext2_inode *ibuf, int b)
+{
+    int bs = EXT2_PRIV(fs)->blocksize;
+    uint32_t p = bs / sizeof(uint32_t);
+
+    if (b < 12) {
+        return ibuf->dbp[b];
+    } else {
+        if (b < 12 + p) {
+            uint32_t *bb = malloc(bs);
+            if (!bb)
+                return -ENOMEM;
+            //printk("SLB: %d\n", ibuf->singly_block);
+            ext2_read_block(fs, bb, ibuf->singly_block);
+            //printk("ORIG %d\n", b);
+            b = bb[b - 12];
+            //printk("TRY %d\n", b);
+            free(bb);
+            return b;
+        } else if (b < 12 + p + p * p) {
+            int A = b - 12;
+            int B = A - p;
+            int C = B / p;
+            int D = B - C * p;
+
+            uint32_t *buf1 = malloc(bs);
+            if (!buf1)
+                return -ENOMEM;
+
+            //printk("reading %d in the doubly block %d\n", b, ibuf->doubly_block);
+            ext2_read_block(fs, buf1, ibuf->doubly_block);
+
+            uint32_t nblock = buf1[C];
+            if (buf1[C] == 0)
+                panic("this case is unhandled\n");
+            //printk("reading in the refd block: %d from loc %d\n", nblock, C);
+            ext2_read_block(fs, buf1, nblock);
+
+            //printk("doubly: reading %d from loc %d\n", buf1[D], D);
+
+            free(buf1);
+            return buf1[D];
+        }
+        printk("Triply block are not yet supported\n");
+        return -ENOSYS;
+    }
+    panic("%s: this can't happen\n", __func__);
+    __not_reached();
+    return -1;
+}
+
+int
+ext2_inode_read_or_create(struct filesystem *fs, int ino, struct ext2_inode *inode, int b, void *buf)
+{
+    ext2_read_inode(fs, inode, ino);
+
+    int the_block = ext2_inode_get_block(fs, inode, b);
+    if (the_block == 0) {
+        int ret = ext2_inode_add_block(fs, ino, inode);
+        memset(buf, 0, EXT2_PRIV(fs)->blocksize);
+        //printk("%s: didn't exist, allocated %d (%s)\n", __func__, ret, errno_to_string(ret));
+        return ret;
+    }
+
+    //printk("%s: existed: return %d\n", __func__, the_block);
+    ext2_read_block(fs, buf, the_block);
+    return the_block;
+}
+
+int
+set_block_number(struct filesystem *fs,
+                 struct ext2_inode *inode,
+                 int inode_no,
+                 int iblock,
+                 int rblock)
+{
+    int bs = EXT2_PRIV(fs)->blocksize;
+	unsigned int p = bs / sizeof(uint32_t);
+
+	unsigned int a, b, c, d, e, f, g;
+
+	uint8_t *tmp;
+
+	if (iblock < 12) {
+		inode->dbp[iblock] = rblock;
+        ext2_write_inode(fs, inode, inode_no);
+		return 0;
+	} else if (iblock < 12 + p) {
+		if (!inode->singly_block) {
+			unsigned int block_no = ext2_alloc_block(fs);
+			if (!block_no)
+                return -ENOSPC;
+			inode->singly_block = block_no;
+			ext2_write_inode(fs, inode, inode_no);
+		}
+		tmp = malloc(bs);
+        if (!tmp)
+            panic("OOM\n");
+
+		ext2_read_block(fs, tmp, inode->singly_block);
+
+		((uint32_t *)tmp)[iblock - 12] = rblock;
+		ext2_write_block(fs, tmp, inode->singly_block);
+
+		free(tmp);
+		return 0;
+	} else if (iblock < 12 + p + p * p) {
+		a = iblock - 12 ;
+		b = a - p;
+		c = b / p;
+		d = b - c * p;
+
+		if (!inode->doubly_block) {
+			unsigned int block_no = ext2_alloc_block(fs);
+			if (!block_no)
+                return -ENOSPC;
+			inode->doubly_block = block_no;
+			ext2_write_inode(fs, inode, inode_no);
+		}
+
+		tmp = malloc(bs);
+        if (!tmp)
+            panic("OOM2\n");
+		ext2_read_block(fs, tmp, inode->doubly_block);
+
+		if (!((uint32_t *)tmp)[c]) {
+			unsigned int block_no = ext2_alloc_block(fs);
+			if (!block_no)
+                goto no_space_free;
+			((uint32_t *)tmp)[c] = block_no;
+			ext2_write_block(fs, tmp, inode->doubly_block);
+		}
+
+		uint32_t nblock = ((uint32_t *)tmp)[c];
+		ext2_read_block(fs, tmp, nblock);
+
+		((uint32_t  *)tmp)[d] = rblock;
+		ext2_write_block(fs, tmp, nblock);
+
+		free(tmp);
+		return 0;
+	} else {
+        panic("TRIPLY BLOCKS NOT SUPPORTED IN %s\n", __func__);
+    }
+
+    return -ENOSYS;
+no_space_free:
+	free(tmp);
+	return -ENOSPC;
+}
+
+int
+allocate_inode_block(struct filesystem *fs,
+                     struct ext2_inode *inode,
+                     int inode_no,
+                     int block)
+{
+    int bs = EXT2_PRIV(fs)->blocksize;
+	unsigned int block_no = ext2_alloc_block(fs);
+
+	if (!block_no || block_no < 0) {
+        //printk("OUCH THIS IS BAD block_no %d\n", block_no);
+        return -ENOSPC;
+    }
+
+	set_block_number(fs, inode, inode_no, block, block_no);
+
+	unsigned int t = (block + 1) * (bs / 512);
+	if (inode->disk_sectors < t) {
+		inode->disk_sectors = t;
+	}
+	ext2_write_inode(fs, inode, inode_no);
+
+	return block_no;
+}
+
+int
+ext2_inode_add_block(struct filesystem *fs, int ino, struct ext2_inode *inode)
+{
+    int rblock = inode->disk_sectors / (EXT2_PRIV(fs)->blocksize / 512);
+    //printk("RBLOCK BECAME %d\n", rblock);
+    return allocate_inode_block(fs, inode, ino, rblock);
+}
+
+
 /* allocates a new block and then appends it to the inode, copying the data
  * buf
  */
 int
-ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
+old_ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
 {
     int block_no, i, j, k, extra_no = 0, extra_no2 = 0;
     struct ext2_inode inode;
@@ -212,8 +396,10 @@ ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
     block_no = ext2_alloc_block(fs);
 
     /* if we failed to allocate a block, we coerce to ENOSPC */
-    if (block_no < 0)
+    if (block_no < 0) {
+        //printk("block_no %d\n", block_no);
         return -ENOSPC;
+    }
 
     /* read in the inode */
     ext2_read_inode(fs, &inode, ino);
@@ -229,6 +415,7 @@ ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
             inode.dbp[i] = block_no;
             /* write back the inode */
             ext2_write_inode(fs, &inode, ino);
+            //printk("%s: wrote to new block %d DBP %d\n", __func__, block_no, i);
             goto done;
         }
     }
@@ -485,8 +672,9 @@ ext2_inode_add_block(struct filesystem *fs, int ino, void *buf)
 
 done:
     /* write the block to the disk */
-    ext2_write_block(fs, buf, block_no);
+    if (buf)
+        ext2_write_block(fs, buf, block_no);
 
     /* success */
-    return 0;
+    return block_no;
 }

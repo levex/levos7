@@ -20,6 +20,8 @@ int ext2_write_block(struct filesystem *fs, void *buf, uint32_t block)
 {
     uint32_t spb = EXT2_PRIV(fs)->sectors_per_block;
 
+    //printk("%s: %d\n", __func__, block);
+
     if (!spb)
         spb ++;
 
@@ -59,7 +61,7 @@ int ext2_alloc_block(struct filesystem *fs)
             /* read in the block usage bitmap */
             ext2_read_block(fs, buffer, bgd->block_of_block_usage_bitmap);
 
-            printk("ext2: blocks in blockgroup %d\n", p->sb.blocks_in_blockgroup);
+            //printk("ext2: blocks in blockgroup %d\n", p->sb.blocks_in_blockgroup);
             /* open the bitmap */
             bitmap_create_using_buffer(p->sb.blocks_in_blockgroup,
                     buffer, &bm);
@@ -74,6 +76,7 @@ int ext2_alloc_block(struct filesystem *fs)
                 continue;
             }
             /* we found a block, commit the bitmap */
+            //printk("bgd->block_of_block_usage_bitmap: %d\n", bgd->block_of_block_usage_bitmap);
             ext2_write_block(fs, buffer, bgd->block_of_block_usage_bitmap);
             
             /* update the superblock */
@@ -89,8 +92,10 @@ int ext2_alloc_block(struct filesystem *fs)
             free(block_buf);
 
             /* return the block id */
-            return i * p->sb.blocks_in_blockgroup + found_block;
+            //printk("ALLOCATED BLOCK %d\n", i * p->sb.blocks_in_blockgroup + found_block + 1);
+            return i * p->sb.blocks_in_blockgroup + found_block + 1;
         }
     }
+    printk("WARNING: CRITICAL: Couldn't find a free block!\n");
     return -1;
 }

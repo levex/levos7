@@ -37,25 +37,87 @@ int ext2_read_directory(struct filesystem *fs, int dino, char *f)
     return -ENOENT;
 }
 
+struct ext2_dir *
+dirent_get(struct filesystem *fs, int inode, int n)
+{
+    int i = 0, b;
+
+    struct ext2_inode *ibuf = malloc(sizeof(*ibuf));
+    if (!ibuf)
+        return NULL;
+
+    char *buffer = malloc(EXT2_PRIV(fs)->blocksize);
+    if (!buffer) {
+        free(ibuf);
+        return NULL;
+    }
+
+    ext2_read_inode(fs, ibuf, inode);
+
+    /* loop thru the DBPs */
+    for (b = 0; b < 12; b ++) {
+        if (ibuf->dbp[b]) {
+            ext2_read_block(fs, buffer, ibuf->dbp[b]);
+            struct ext2_dir *curr = (struct ext2_dir *) buffer;
+next:
+            if (i == n) {
+                struct ext2_dir *ret = malloc(curr->size);
+                if (!ret) {
+                    free(ibuf);
+                    free(buffer);
+                    return NULL;
+                }
+                memcpy(ret, curr, curr->size);
+                return ret;
+            } else {
+                curr = ((void *)curr) + curr->size;
+                if ((void *)curr >= (void *)buffer + EXT2_PRIV(fs)->blocksize)
+                    continue;
+                i ++;
+                goto next;
+            }
+        } else return NULL;
+    }
+
+    panic("unable to parse doubly for directory\n");
+    return NULL;
+}
+
+void
+dirent_free(void *buf)
+{
+    free(buf);
+}
+
 static inline int
 __get_dirent_min_length(struct ext2_dir *dirent)
 {
-    return 9 + dirent->namelength;
+    return sizeof(*dirent) + dirent->namelength;
+}
+
+char *
+dirent_get_name(struct ext2_dir *before)
+{
+    return (void *) before + sizeof(*before);
 }
 
 static inline void
 __minimize_dirent(struct ext2_dir *dirent)
 {
+    printk("minimized dirent %s from %d", dirent_get_name(dirent));
     dirent->size = __get_dirent_min_length(dirent);
+    while (dirent->size % 4)
+            dirent->size ++;
+    printk(" to %d\n", dirent->size);
 }
 
 static inline void
 __maximize_dirent(struct ext2_dir *dirent, int soff, int blocksize)
 {
-    //printk("maximizing soff %d start: %d\n", soff, dirent->size);
+    printk("maximizing soff %d start: %d\n", soff, dirent->size);
     while ((soff + dirent->size) % blocksize)
         dirent->size ++;
-    //printk("maximizing end: %d\n", dirent->size);
+    printk("maximizing end: %d\n", dirent->size);
 }
 
 static struct ext2_dir *
@@ -66,6 +128,8 @@ __ext2_find_largest_dirent_space(struct ext2_dir *dirbuf, int length, int bs)
 
     for (off = 0; off < bs; off += p->size) {
         p = ((void *)dirbuf) + off;
+        printk("dirent space: \"%s\" off %d size %d\n",
+                dirent_get_name(p), off, p->size);
 
         int minlength = __get_dirent_min_length(p);
 
@@ -96,6 +160,10 @@ __ext2_place_dirent(struct filesystem *fs, struct ext2_inode *inode,
     for (i = 0; i < 12; i ++) {
         /* Case 1.1, the DBP doesn't exist */
         if (inode->dbp[i] == 0) {
+            /* in reality, this case can't happen because it must contain
+             * at least a "." and a "..", however in order to reuse
+             * this in mkdir, we handle this case
+             */
             void *buffer = malloc(p->blocksize);
             if (!buffer) {
                 free(dirbuf);
@@ -118,8 +186,8 @@ __ext2_place_dirent(struct filesystem *fs, struct ext2_inode *inode,
             if ((int) before == -1)
                 continue;
 
-            //printk("There is enough space after dirent \"%s\" (%d bytes)\n",
-                    //(void *) before + sizeof(before) + 1, before->size);
+            printk("There is enough space after dirent \"%s\" (%d bytes)\n",
+                    (void *) before + sizeof(before) + 1, before->size);
 
             /* there is enough space to put this dirent after "before" */
 
@@ -130,11 +198,14 @@ __ext2_place_dirent(struct filesystem *fs, struct ext2_inode *inode,
                  * in this case we would overflow, so we don't need to check
                  * the "after"
                  */
+                printk("before is at offset %d\n", (int) before - (int)dirbuf);
                 __minimize_dirent(before);
 
                 new = (void *)before + before->size;
+                printk("new is at offset %d\n", (int) new - (int)dirbuf);
 
                 memcpy(new, dirent, dirent_minlength);
+
                 /* maximize dirent */
                 __maximize_dirent(new, (int) new - (int)dirbuf, p->blocksize);
 
@@ -143,6 +214,7 @@ __ext2_place_dirent(struct filesystem *fs, struct ext2_inode *inode,
 
                 goto done;
             }
+            panic("wat");
 
             /* get a pointer to "after" */
             struct ext2_dir *after = (void *)before + before->size;
