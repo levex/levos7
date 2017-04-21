@@ -92,7 +92,15 @@ do_first_init()
     int argc = 0, envc = 0, i;
     char **argvp = current_task->bstate.argvp;
     char **envp = current_task->bstate.envp;
+
+    printk("starting pid %d as the init task\n", current_task->pid);
+
     DISABLE_IRQ();
+
+    /* setup the task structure for exposure to userspace */
+    current_task->ppid = current_task->pid;
+    current_task->pgid = current_task->pid;
+    current_task->sid  = current_task->pid;
 
     /* map a stack */
     uint32_t p = palloc_get_page();

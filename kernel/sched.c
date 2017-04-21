@@ -13,8 +13,11 @@
 static pid_t last_pid = 0;
 struct task *current_task;
 
-static struct task *all_tasks[128];
-static int last_task;
+static struct list all_tasks;
+
+struct list *__ALL_TASKS_PTR = &all_tasks;
+
+//static int last_task;
 
 static struct list zombie_processes;
 
@@ -45,6 +48,7 @@ sched_init(void)
     printk("sched: init\n");
 
     list_init(&zombie_processes);
+    list_init(&all_tasks);
 
     current_task = malloc(sizeof(*current_task));
     if (!current_task)
@@ -52,13 +56,17 @@ sched_init(void)
 
     current_task->mm = 0;
     current_task->pid = 0;
+    current_task->pgid = 0;
+    current_task->ppid = 0;
+    current_task->sid = 0;
     current_task->state = TASK_RUNNING;
     current_task->time_ran = 0;
     signal_init(current_task);
 
-    memset(all_tasks, 0, sizeof(struct task *) * 128);
-    all_tasks[0] = current_task;
-    last_task = 0;
+    //memset(all_tasks, 0, sizeof(struct task *) * 128);
+    //all_tasks[0] = current_task;
+    list_push_back(&all_tasks, &current_task->all_elem);
+    //last_task = 0;
 
     intr_register_user(0x2f, intr_yield);
 
@@ -110,15 +118,12 @@ process_add_waiter(struct process *proc, struct task *waiter)
     list_push_back(&proc->waiters, &waiter->wait_elem);
 }
 
-struct task *create_kernel_task(void (*func)(void))
+int
+__task_init(struct task *task)
 {
-    uint32_t *new_stack, tmp;
-    struct task *task = malloc(sizeof(*task));
-
-    if (!task)
-        return NULL;
-
     task->pid = allocate_pid();
+    task->ppid = 0;
+    task->pgid = 0;
     task->state = TASK_PREEMPTED;
     task->time_ran = 0;
     task->parent = NULL;
@@ -129,10 +134,26 @@ struct task *create_kernel_task(void (*func)(void))
     signal_init(task);
     task->owner = process_create(task);
     if (!task->owner) {
-        //free_pid(task->pid);
+        //free_pid(task->pid); // TODO
         free(task);
-        return NULL;
+        return -ENOMEM;
     }
+
+    return 0;
+}
+
+struct task *create_kernel_task(void (*func)(void))
+{
+    uint32_t *new_stack, tmp;
+    struct task *task = malloc(sizeof(*task));
+    int rc;
+
+    if (!task)
+        return NULL;
+
+    rc = __task_init(task);
+    if (rc)
+        return NULL;
     
     /* get a stack for the task, since this is a kernel thread
      * we can use malloc
@@ -282,6 +303,7 @@ task_exit(struct task *t)
 
     close_filetable(t);
     free(t->irq_stack_bot);
+    list_remove(&t->all_elem);
     free(t);
 }
 
@@ -289,21 +311,17 @@ struct task *create_user_task_withmm(pagedir_t mm, void (*func)(void))
 {
     uint32_t *new_stack, p_new_stack, tmp;
     struct task *task = malloc(sizeof(*task));
+    int rc;
 
     if (!task)
         return NULL;
 
-    task->pid = allocate_pid();
-    task->state = TASK_PREEMPTED;
-    task->time_ran = 0;
-    task->parent = NULL;
-    task->exit_code = 0;
+    rc = __task_init(task);
+    if (rc)
+        return NULL;
+
     task->mm = mm;
-    task->flags = 0;
-    task->owner = process_create(task);
-    list_init(&task->children_list);
-    signal_init(task);
-    
+
     /* get a stack for the task, since this is a kernel thread
      * we can use malloc
      */
@@ -363,6 +381,9 @@ sched_add_child(struct task *parent, struct task *child)
     list_push_back(&parent->children_list, &child->children_elem);
     child->parent = parent;
     child->owner->ppid = parent->pid;
+    child->ppid = parent->pid;
+    child->sid = parent->sid;
+    child->pgid = parent->pgid;
 }
 
 struct process *
@@ -417,12 +438,25 @@ struct task *
 get_task_for_pid(pid_t pid)
 {
     int i;
+    struct list_elem *elem;
 
-    for (i = 0; i < 128; i ++)
+    /*for (i = 0; i < 128; i ++)
         if (all_tasks[i] && all_tasks[i]->pid == pid)
-            return all_tasks[i];
+            return all_tasks[i];*/
+    list_foreach_raw(&all_tasks, elem) {
+        struct task *task = list_entry(elem, struct task, all_elem);
+
+        if (task->pid == pid)
+            return task;
+    }
 
     return NULL;
+}
+
+void
+task_join_pg(struct task *task, pid_t pgid)
+{
+    task->pgid = pgid;
 }
 
 struct task *
@@ -452,12 +486,14 @@ void
 sched_add_rq(struct task *task)
 {
     //printk("%s: task->pid: %d task->regs: 0x%x\n", __func__, task->pid, task->regs);
-    for (int i = 0; i < 128; i ++) {
+    /*for (int i = 0; i < 128; i ++) {
         if (all_tasks[i] == 0) {
             all_tasks[i] = task;
             return;
         }
-    }
+    }*/
+    list_push_back(&all_tasks, &task->all_elem);
+    return;
     panic("RQ is full\n");
 }
 
@@ -488,7 +524,9 @@ pick_next_task(void)
 {
     //printk("%s\n", __func__);
     extern uint32_t __pit_ticks;
-retry:
+    struct list_elem *elem;
+    struct task *task = current_task;
+/*retry:
     for (int i = last_task; i < 128; i ++) {
         if (all_tasks[i] != 0) { 
             if (all_tasks[i]->state == TASK_DYING) {
@@ -496,7 +534,7 @@ retry:
                 continue;
             } else if (all_tasks[i]->state == TASK_SLEEPING &&
                     all_tasks[i]->wake_time <= __pit_ticks) {
-                all_tasks[i]->state == TASK_PREEMPTED;
+                all_tasks[i]->state = TASK_PREEMPTED;
             } else if (!task_runnable(all_tasks[i]))
                 continue;
             last_task = i + 1;
@@ -509,7 +547,23 @@ retry:
     if (last_task == 0)
         panic("No task to run\n");
     last_task = 0;
-    goto retry;
+    */
+
+retry:
+    elem = list_next(&task->all_elem);
+    if (elem == list_tail(&all_tasks))
+        elem = list_begin(&all_tasks);
+    task = list_entry(elem, struct task, all_elem);
+
+    if (task->state == TASK_DYING) {
+        task_exit(task);
+        goto retry;
+    } else if (task->state == TASK_SLEEPING && task->wake_time <= __pit_ticks) {
+        task->state = TASK_PREEMPTED;
+    } else if (!task_runnable(task))
+        goto retry;
+
+    return task;
 }
 
 void

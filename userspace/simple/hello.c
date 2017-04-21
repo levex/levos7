@@ -58,6 +58,13 @@ main(int argc, char **argvp)
         return 0;
     }
 
+    if (strcmp(argvp[argc - 1], "group") == 0) {
+        printf("Sending SIGKILL to my group, bye\n");
+        rc = kill(0, SIGKILL);
+        printf("rc is %d, errno is %d\n", rc, errno);
+        return 0;
+    }
+
     if (strcmp(argvp[argc - 1], "ls") == 0) {
         fd = open("/etc", 0, 0);
         printf("fd is %d, errno is %d\n", fd, errno);

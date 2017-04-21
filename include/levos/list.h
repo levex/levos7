@@ -59,9 +59,9 @@ struct list_elem *list_tail (struct list *);
          e = list_next(e))
 
 #define list_foreach(list, e, target, STRUCT, MEMBER) \
-    for (e = list_begin(list); \
+    for (e = list_begin(list), (target) = list_entry(e, STRUCT, MEMBER); \
          e != list_end(list); \
-         e = list_next(e), target = list_entry(e, STRUCT, MEMBER))
+         (target = list_entry(e, STRUCT, MEMBER)), e = list_next(e))
 
 /* List insertion. */
 void list_insert (struct list_elem *, struct list_elem *);

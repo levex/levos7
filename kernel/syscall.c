@@ -607,10 +607,8 @@ sys_kill(int pid, int sig)
         return -EINVAL;
 
     if (pid == 0) {
-        /* FIXME: when process grouping is implemented, send to
-         * the calling process' group
-         */
-        return -ENOSYS;
+        send_signal_group_of(current_task, sig);
+        return 0;
     }
 
     if (pid > 0) {
@@ -620,24 +618,84 @@ sys_kill(int pid, int sig)
     }
 
     if (pid == -1) {
-        /* XXX: send to every process we have permission */
+        /* XXX: send to every process we have permission,
+         * we for the moment denote this as the session
+         */
+        send_signal_session_of(current_task, sig);
         return 0;
     }
 
     if (pid < -1) {
         int pgid = -pid;
-        /* XXX: send to every process in PG %pgid */
+        send_signal_group(pgid, sig);
         return 0;
     }
     
     __not_reached();
 }
 
+int
+sys_setsid(void)
+{
+    if (current_task->pg_leader)
+        return -EPERM;
+
+    current_task->sid = current_task->pid;
+    current_task->pgid = current_task->pid;
+    current_task->pg_leader = NULL;
+
+    return current_task->pid;
+}
+
+int
+sys_setpgid(pid_t pid, pid_t pgid)
+{
+    struct task *task, *pg_leader;
+
+    if (pgid < 0)
+        return -EINVAL;
+
+    if (pid == 0)
+        pid = current_task->pid;
+
+    if (pgid == 0)
+        pgid = pid;
+
+    pg_leader = get_task_for_pid(pgid);
+    /* err, this is not mentioned by POSIX, but this seems
+     * like the thing to do?
+     */
+    if (!pg_leader)
+        return -ESRCH;
+
+    /* if we are moving a task, then it must match the session ids */
+    if (task->pgid != pgid &&
+            task->sid != pg_leader->sid)
+        return -EPERM;
+
+    task->pgid = pgid;
+    return 0;
+}
+
+int
+sys_getpgid(pid_t pid)
+{
+    struct task *task;
+    if (pid == 0)
+        return current_task->pgid;
+
+    task = get_task_for_pid(pid);
+    if (task)
+        return task->pgid;
+
+    return -ESRCH;
+}
+
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
-    //printk("SYSCALL %d\n", no);
+    //printk("SYSCALL pid %d no %d\n", current_task->pid, no);
     switch(no) {
         case 0x1:
             sys_exit((int) a);
@@ -674,12 +732,18 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_dup((int) a);
         case 0x30:
             return sys_signal((int) a, (sighandler_t) b);
+        case 0x39:
+            return sys_setpgid((int) a, (int) b);
         case 0x3f:
             return sys_dup2((int) a, (int) b);
+        case 0x42:
+            return sys_setsid();
         case 0x59:
             return sys_readdir((int) a, (struct linux_dirent *) b, (int) c);
         case 0x6d:
             return sys_uname((struct uname *) a);
+        case 0x84:
+            return sys_getpgid((int) a);
     }
 
     syscall_undefined(no);

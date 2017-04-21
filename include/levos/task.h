@@ -27,8 +27,9 @@ struct task;
 
 struct process
 {
-    pid_t pid;
-    pid_t ppid;
+    pid_t pid; /* our PID */
+    pid_t ppid; /* the parent's PID */
+    pid_t pgid; /* process group id */
     struct task *task;
     int exit_code;
     int status;
@@ -43,7 +44,10 @@ struct task
 #define LEVOS_TASK_MAGIC 0xC0FFEEEE
     int task_magic;
 
-    pid_t pid;
+    pid_t pid; /* PID */
+    pid_t ppid; /* parent process ID */
+    pid_t pgid; /* process group ID */
+    pid_t sid; /* session ID */
 
 #define TFLAG_WAITED   (1 << 0)
     int flags;
@@ -66,6 +70,11 @@ struct task
     int exit_code;
     struct process *owner;
 
+    /* leader of the process group */
+    struct task *pg_leader;
+    /* leader of the session */
+    struct task *ses_leader;
+
     struct bin_state bstate;
 
     struct signal_struct signal;
@@ -81,6 +90,8 @@ struct task
 
     struct list_elem wait_elem;
 
+    struct list_elem all_elem;
+
     uint32_t *irq_stack_top;
     uint32_t *irq_stack_bot;
 
@@ -94,6 +105,11 @@ struct task
     struct pt_regs *regs;
     struct pt_regs *sys_regs;
 };
+
+
+extern struct list *__ALL_TASKS_PTR;
+#define for_each_task(task) struct list_elem *___elem; \
+        list_foreach(__ALL_TASKS_PTR, ___elem, task, struct task, all_elem);
 
 inline int task_runnable(struct task *t)
 {

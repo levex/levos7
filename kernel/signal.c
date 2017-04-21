@@ -47,6 +47,8 @@ __send_signal(struct task *task, int signal)
     //printk("%s 0x%x\n", __func__, sig->data);
     //dump_registers(sig->data);
 
+    printk("%s: to %d, sig: %s\n", __func__, task->pid, signal_to_string(signal));
+
     list_push_back(&task->signal.pending_signals, &sig->elem);
 }
 
@@ -60,11 +62,63 @@ send_signal(struct task *task, int signal)
 }
 
 void
+send_signal_group(pid_t pgid, int signal)
+{
+    struct task *task = NULL;
+    struct list_elem *elem;
+    list_foreach_raw(__ALL_TASKS_PTR, elem) {
+        task = list_entry(elem, struct task, all_elem);
+        if (task->pgid == pgid) {
+            __send_signal(task, signal); 
+        }
+    }
+
+    /* if our PG has been signalled, we need to reschedule to process
+     * the signal
+     */
+    if (current_task->pgid == pgid)
+        reschedule_to(current_task);
+}
+
+void
+send_signal_group_of(struct task *task, int signal)
+{
+    send_signal_group(task->pgid, signal);
+}
+
+/* XXX: fixup with send_signal_group, they are the same */
+void send_signal_session(pid_t sid, int signal)
+{
+    struct task *task = NULL;
+    struct list_elem *elem;
+    list_foreach_raw(__ALL_TASKS_PTR, elem) {
+        task = list_entry(elem, struct task, all_elem);
+        if (task->sid == sid) {
+            __send_signal(task, signal); 
+        }
+    }
+
+    /* if our session has been signalled, we need to reschedule to process
+     * the signal
+     */
+    if (current_task->sid == sid)
+        reschedule_to(current_task);
+
+}
+
+void
+send_signal_session_of(struct task *task, int signal)
+{
+    send_signal_session(task->sid, signal);
+}
+
+void
 default_sigaction(struct task *task, int signum)
 {
     if (signum == SIGCONT) {
         /* XXX FIXME: this is not implemented yet properly */
         task->state = TASK_PREEMPTED;
+        /* XXX: fallthrough until this is clarified and fixed */
     }
 
     if (signum == SIGSTOP ||
@@ -73,6 +127,7 @@ default_sigaction(struct task *task, int signum)
             signum == SIGTTIN) {
         /* XXX FIXME: not correct */
         task->state = TASK_BLOCKED;
+        /* XXX: fallthrough until this is clarified and fixed */
     }
 
     do_fatal_signal(task, signum);
