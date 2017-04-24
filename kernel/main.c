@@ -20,7 +20,11 @@
 #ifdef CONFIG_TCP_TEST
 # include <levos/tcp.h>
 #endif
+#ifdef CONFIG_RING_BUFFER_TEST
+# include <levos/ring.h>
+#endif
 #include <levos/ext2.h> /* TODO remove */
+#include <levos/tty.h>
 
 void
 bss_init(void)
@@ -118,6 +122,13 @@ do_first_init()
     /* it needs a filetable */
     setup_filetable(current_task);
 
+    /* setup to use tty0 */
+    extern struct device console_device;
+    struct tty_device *tty = tty_new(&console_device, NULL);
+    tty->tty_fg_proc = current_task->pid;
+    struct file *f_in = tty_get_file(tty);
+    current_task->file_table[1] = current_task->file_table[0] = f_in;
+
     /* TSS */
     tss_update(current_task);
 
@@ -177,6 +188,28 @@ init_task(void)
     p = __path_get_path(test_path_4);
     printk("name: %s path: %s\n", __path_get_name(test_path_4), p);
     __path_free(p);
+#endif
+
+#ifdef CONFIG_RING_BUFFER_TEST
+    struct ring_buffer rb;
+    char *rb_test_string = "123456789ABCDEF0";
+    char rb_read[17];
+    memset(rb_read, 0 , 17);
+    ring_buffer_init(&rb, 10);
+    ring_buffer_set_flags(&rb, RB_FLAG_NONBLOCK);
+    printk("ringtest: testing default ringbuffer...\n");
+    int n_wrote = ring_buffer_write(&rb, rb_test_string, 16);
+    int n_read = ring_buffer_read(&rb, rb_read, 5); /* 12345 */
+    printk("ringtest: wrote from \"%s\" (%d), read back \"%s\" (%d) \n",
+            rb_test_string, n_wrote, rb_read, n_read);
+    n_wrote = ring_buffer_write(&rb, "hello", 5);
+    printk("ringtest: wrote 5 bytes\n");
+    memset(rb_read, 0 , 17);
+    n_read = ring_buffer_read(&rb, rb_read, 5);
+    printk("ringtest: read 2nd 5 bytes: %s\n", rb_read); /* should be 6789A */
+    memset(rb_read, 0 , 17);
+    n_read = ring_buffer_read(&rb, rb_read, 5);
+    printk("ringtest: read 3rd 5 bytes: %s\n", rb_read); /* should be hello */
 #endif
 
     /* open the init executable */

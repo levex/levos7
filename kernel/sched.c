@@ -21,12 +21,26 @@ struct list *__ALL_TASKS_PTR = &all_tasks;
 
 static struct list zombie_processes;
 
+static int __preempt_enabled;
+
 void __noreturn late_init(void);
 void __noreturn __idle_thread(void);
 
 void intr_yield(struct pt_regs *);
 void sched_yield(void);
 void reschedule(void);
+
+void
+preempt_enable(void)
+{
+    __preempt_enabled = 1;
+}
+
+void
+preempt_disable(void)
+{
+    __preempt_enabled = 0;
+}
 
 inline int
 task_is_kernel(struct task *t)
@@ -282,6 +296,9 @@ task_exit(struct task *t)
         panic("Kernel bug: Attempting to kill idle/swapper\n");
 
     //printk("TASK EXIT for %d\n", t->pid);
+    
+    /* queue a SIGCHLD to the parent */
+    send_signal(get_task_for_pid(t->ppid), SIGCHLD);
 
     /* check if there are waiters */
     if (!list_empty(&t->owner->waiters)) {
@@ -502,11 +519,15 @@ void __noreturn
 __idle_thread(void)
 {
     struct task *n;
+    __preempt_enabled = 1;
     arch_switch_timer_sched();
 
+    /* XXX 4/22/17 review: I am not entirely sure why this is/was
+     *                     useful, so I removed it
+     */
     /* simulate a timer interrupt to get some values to regs */
-    asm volatile("mov $0xC0FFEEEE, %%eax; int $32":::"eax");
-    panic_on(current_task->regs->eax != 0xC0FFEEEE, "pt_regs is not stable");
+    //asm volatile("mov $0xC0FFEEEE, %%eax; int $32":::"eax");
+    //panic_on(current_task->regs->eax != 0xC0FFEEEE, "pt_regs is not stable");
 
     /* start another task */
 
@@ -610,6 +631,9 @@ reschedule_to(struct task *next)
 void
 reschedule(void)
 {
+    if (__preempt_enabled == 0)
+        reschedule_to(current_task);
+
     if (current_task->state == TASK_RUNNING)
         current_task->state = TASK_PREEMPTED;
     struct task *next = pick_next_task();

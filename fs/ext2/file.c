@@ -452,6 +452,7 @@ struct file_operations ext2_fops = {
     .read = ext2_read_file,
     .write = ext2_write_file,
     .readdir = ext2_filldir,
+    .fstat = ext2_file_fstat,
 };
 
 

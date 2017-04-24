@@ -47,7 +47,7 @@ __send_signal(struct task *task, int signal)
     //printk("%s 0x%x\n", __func__, sig->data);
     //dump_registers(sig->data);
 
-    printk("%s: to %d, sig: %s\n", __func__, task->pid, signal_to_string(signal));
+    //printk("%s: to %d, sig: %s\n", __func__, task->pid, signal_to_string(signal));
 
     list_push_back(&task->signal.pending_signals, &sig->elem);
 }
@@ -255,6 +255,11 @@ signal_handle(struct task *task)
 
     sig->current_signal = signal;
 
+    //printk("handling signal in pid %d: %s, action %s\n",
+            //task->pid, signal_to_string(signum), sig->signal_handlers[signum]
+             //== SIG_DFL ? "default action" : sig->signal_handlers[signum] == SIG_IGN ?
+                //"ignore" : "handler");
+
     if (sig->signal_handlers[signum] == SIG_DFL)
         default_sigaction(task, signum);
     else if (sig->signal_handlers[signum] == SIG_IGN)
@@ -277,6 +282,9 @@ signal_init(struct task *task)
     /* set default actions */
     for (i = MIN_SIG; i <= MAX_SIG; i ++)
         sig->signal_handlers[i] = SIG_DFL;
+
+    /* SIGCHLD is ignored by default */
+    sig->signal_handlers[SIGCHLD] = SIG_IGN;
 
     /* allocate signal stack */
     sig->stack_phys_page = palloc_get_page();

@@ -691,6 +691,24 @@ sys_getpgid(pid_t pid)
     return -ESRCH;
 }
 
+int
+sys_ioctl(int fd, int cmd, int arg)
+{
+    struct file *f;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    if (!f->fops->ioctl)
+        return -ENOTTY;
+
+    return f->fops->ioctl(f, (unsigned long) cmd, (unsigned long) arg);
+}
+
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
@@ -732,6 +750,8 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_dup((int) a);
         case 0x30:
             return sys_signal((int) a, (sighandler_t) b);
+        case 0x36:
+            return sys_ioctl((int) a, (unsigned int) b, (unsigned int) c);
         case 0x39:
             return sys_setpgid((int) a, (int) b);
         case 0x3f:

@@ -5,7 +5,9 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/wait.h>
+#ifndef MAC_HACK
 #include <sys/utsname.h>
+#endif
 
 #define STRCMP(c, s, n) strlen(c) == n && strncmp(c, s, n)
 
@@ -41,10 +43,13 @@ process_cmd(char *b)
                 NULL,
             };
 
+#ifndef MAC_HACK
             execve("/lol", argvp, environ);
+#endif
             exit(13);
         }
     }
+#ifndef MAC_HACK
     if (STRCMP(b, "uname", 5) == 0) {
         struct uname name;
 
@@ -55,6 +60,7 @@ process_cmd(char *b)
                 name.machine, name.nodename);
         return;
     }
+#endif
 
     if (*b != 0)
         printf("unknown command\n");
@@ -65,6 +71,7 @@ main(int argc, char **argvp)
 {
     char cmdbuf[128];
     int i = 0;
+    int ret;
 
     /* TODO: tty set raw mode */
 
@@ -80,7 +87,7 @@ prompt:
         printf(the_prompt);
         //write(1, "lOS $ ", 6);
 read_more:
-        read(0, (char *) &c, 1);
+        /*read(0, (char *) &c, 1);
         if (c == '\r') {
             printf("\n");
             cmdbuf[i] = 0;
@@ -89,7 +96,18 @@ read_more:
             goto prompt;
         }
         cmdbuf[i++] = c;
-        printf("%c", c);
-        goto read_more;
+        //printf("%c", c);
+        */
+        memset(cmdbuf, 0, 128);
+        ret = read(0, cmdbuf, 128);
+        //printf("ret is %d\n", ret);
+        if (ret == 1)
+            goto prompt;
+        if (ret == 0)
+            exit(0);
+        cmdbuf[strlen(cmdbuf) - 1] = 0;
+        //printf("read \"%s\"\n", cmdbuf);
+        process_cmd(cmdbuf);
+        goto prompt;
     }
 }

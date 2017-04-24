@@ -30,6 +30,7 @@ struct file_operations {
     int (*fstat)(struct file *, struct stat *);
     int (*close)(struct file *);
     int (*readdir)(struct file *, struct linux_dirent *);
+    int (*ioctl)(struct file *, unsigned long, unsigned long arg);
 };
 
 #define O_RDONLY  0
@@ -43,6 +44,7 @@ struct file_operations {
 
 #define FILE_TYPE_NORMAL 0
 #define FILE_TYPE_SOCKET 1
+#define FILE_TYPE_TTY    2
 
 struct file {
     struct file_operations *fops;

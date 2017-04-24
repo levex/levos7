@@ -118,6 +118,8 @@ inline int task_runnable(struct task *t)
 }
 int task_do_wait(struct task *, struct process *);
 void task_exit(struct task *t);
+void task_unblock(struct task *t);
+void task_block(struct task *t);
 
 struct task *create_user_task_fork(void (*)(void));
 struct task *create_kernel_task(void (*)(void));
@@ -132,6 +134,9 @@ void sched_yield(void);
 void sched_add_rq(struct task *);
 void sched_add_child(struct task *, struct task *);
 struct process *sched_get_child(struct task *, pid_t);
+
+void preempt_enable(void);
+void preempt_disable(void);
 
 void task_sleep(struct task *, uint32_t);
 void task_kick(struct task *);
