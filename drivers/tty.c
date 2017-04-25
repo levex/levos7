@@ -40,6 +40,8 @@ tty_new(struct device *dev)
     tty->tty_state = TTY_STATE_UNKNOWN;
     tty->tty_ldisc = &n_tty_ldisc;
     termios_init(&tty->tty_termios);
+    tty->tty_winsize.ws_row = 80;
+    tty->tty_winsize.ws_col = 25;
     rc = tty->tty_ldisc->init(tty->tty_ldisc);
     if (rc) {
         free(tty);
@@ -73,6 +75,7 @@ size_t tty_fwrite(struct file *f, void *_buf, size_t len)
 
 int tty_ffstat(struct file *f, struct stat *st)
 {
+    memset(st, 0, sizeof(*st));
     st->st_mode = S_IFCHR;
     return 0;
 }
@@ -89,7 +92,41 @@ int tty_freaddir(struct file *f, struct linux_dirent *de)
 
 int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
 {
-    return -ENOSYS;
+    struct tty_device *tty = f->priv;
+
+    if (req == TCGETS) {
+        struct termios *tm = (void *) arg;
+        memcpy(tm, &tty->tty_termios, sizeof(*tm));
+        return 0;
+    } else if (req == TCSETS) {
+        struct termios *tm = (void *) arg;
+        memcpy(&tty->tty_termios, tm, sizeof(*tm));
+        return 0;
+    } else if (req == TIOCGWINSZ) {
+        struct winsize *ws = (void *) arg;
+        memcpy(ws, &tty->tty_winsize, sizeof(*ws));
+        return 0;
+    } else if (req == TIOCSWINSZ) {
+        struct winsize *ws = (void *) arg;
+        int should_sig = 0;
+        if (ws->ws_row != tty->tty_winsize.ws_row ||
+                ws->ws_col != tty->tty_winsize.ws_col ||
+                ws->ws_xpixel != tty->tty_winsize.ws_xpixel ||
+                ws->ws_ypixel != tty->tty_winsize.ws_ypixel)
+            should_sig = 1;
+        memcpy(&tty->tty_winsize, ws, sizeof(*ws));
+        if (should_sig)
+            send_signal(current_task, SIGWINCH);
+        return 0;
+    } else if (req == TIOCGPGRP) {
+        pid_t *tg = arg;
+        *tg = tty->tty_fg_proc;
+        return 0;
+    } else if (req == TIOCSPGRP) {
+        pid_t *tg = arg;
+        tty->tty_fg_proc = *tg;
+        return 0;
+    }
 }
 
 struct file_operations tty_fops = {

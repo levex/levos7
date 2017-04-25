@@ -103,7 +103,13 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             tty->tty_state = TTY_STATE_CLOSED;
         n_tty_flush(tty);
         return;
-    };
+    }
+
+    if (tm->c_lflag & ISIG
+            && byte == tm->c_cc[VSUSP]) {
+        send_signal_group(tty->tty_fg_proc, SIGTSTP);
+        return;
+    }
 
     /* do quick transforms */
     if (tm->c_iflag & INLCR && byte == '\n') {

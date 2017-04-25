@@ -152,6 +152,8 @@ __task_init(struct task *task)
         free(task);
         return -ENOMEM;
     }
+    task->owner->status = 0;
+    task->owner->exit_code = 0;
 
     return 0;
 }
@@ -260,6 +262,8 @@ setup_filetable(struct task *task)
     /* for stdin, we currently just pass through to the serial,
      * but in the future we really should implement ttys and
      * give the init process a different stdin
+     *
+     * FIXME
      */
 
     extern struct file serial_base_file;
@@ -270,6 +274,27 @@ setup_filetable(struct task *task)
     task->file_table[1] = dup_file(&serial_base_file);
     /* stderr */
     task->file_table[2] = dup_file(&serial_base_file);
+}
+
+void
+copy_filetable(struct task *dst, struct task *src)
+{
+    int i;
+
+    /* XXX: setup_filetable has dupped a few files, get rid of them */
+    free(dst->file_table[0]->respath);
+    free(dst->file_table[1]->respath);
+    free(dst->file_table[2]->respath);
+    free(dst->file_table[0]);
+    free(dst->file_table[1]);
+    free(dst->file_table[2]);
+
+    /* actually copy the table, duping files */
+    for (i = 0; i < FD_MAX; i ++) {
+        dst->file_table[i] = src->file_table[i];
+        if (dst->file_table[i])
+            dst->file_table[i]->refc ++;
+    }
 }
 
 void
@@ -439,12 +464,15 @@ task_do_wait(struct task *waiter, struct process *waited)
 
     /* we've been woken up! */
 
-    waiter->flags |= TFLAG_WAITED;
+    if (waited->task)
+        waited->task->flags |= TFLAG_WAITED;
 
     /* figure out what happened */
     if (waited->task == NULL) {
-        /* the task has exited */
-        return WAIT_EXIT((uint8_t) waited->exit_code);
+        if (waited->status == TASK_EXITED)
+            return WAIT_EXIT((uint8_t) waited->exit_code);
+        else if (waited->status == TASK_DEATH_BY_SIGNAL)
+            return WAIT_SIG((uint8_t) waited->exit_code);
     } else
         panic("Unsupported wait!\n");
 
@@ -486,10 +514,22 @@ create_user_task(void (*func)(void))
 struct task *
 create_user_task_fork(void (*func)(void))
 {
+    struct task *new;
     pagedir_t mm = copy_page_dir(current_task->mm);
+
+    /* mark the pages COW */
     mark_all_user_pages_cow(current_task->mm);
     mark_all_user_pages_cow(mm);
-    return create_user_task_withmm(mm, func);
+
+    /* XXX: fixme: undo COW */
+    new = create_user_task_withmm(mm, func);
+    if (!new)
+        return NULL;
+
+    /* copy the filetable */
+    copy_filetable(new, current_task);
+
+    return new;
 }
 
 void

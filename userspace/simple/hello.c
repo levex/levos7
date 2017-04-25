@@ -46,6 +46,29 @@ main(int argc, char **argvp)
         return 0;
     }
 
+    if (strcmp(argvp[argc - 1], "pipe") == 0) {
+        int fds[2];
+        int rfd, wfd;
+        char buf[17];
+
+        memset(buf, 0, 17);
+
+        rc = pipe(fds);
+        rfd = fds[0];
+        wfd = fds[1];
+        printf("created pipe: rc %d rfd %d wfd %d errno %d\n",
+                rc, rfd, wfd, errno);
+
+        rc = write(wfd, "Pipe test worked", 16);
+        printf("after write: rc %d errno %d\n", rc, errno);
+
+        rc = read(rfd, buf, 16);
+        printf("after read : rc %d errno %d\n", rc, errno);
+
+        printf("read: \"%s\"\n", buf);
+        return 0;
+    }
+
     if (strcmp(argvp[argc - 1], "sig") == 0) {
         signal(SIGSEGV, segv_handler);
         static_ptr = 0;

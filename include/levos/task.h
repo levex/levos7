@@ -12,6 +12,7 @@
 
 #define WAIT_CODE(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
 #define WAIT_EXIT(a) WAIT_CODE(a, 0)
+#define WAIT_SIG(a) WAIT_CODE(a, 1)
 
 typedef int pid_t;
 
@@ -24,6 +25,9 @@ struct bin_state
 };
 
 struct task;
+
+#define TASK_EXITED          1
+#define TASK_DEATH_BY_SIGNAL 2
 
 struct process
 {

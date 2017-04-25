@@ -45,6 +45,7 @@ struct file_operations {
 #define FILE_TYPE_NORMAL 0
 #define FILE_TYPE_SOCKET 1
 #define FILE_TYPE_TTY    2
+#define FILE_TYPE_PIPE   3
 
 struct file {
     struct file_operations *fops;

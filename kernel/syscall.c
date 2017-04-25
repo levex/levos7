@@ -311,6 +311,7 @@ sys_exit(int err_code)
     current_task->state = TASK_DYING;
     current_task->exit_code = err_code;
     current_task->owner->exit_code = err_code;
+    current_task->owner->status = TASK_EXITED;
     //printk("pid %d exited with exit code %d\n", current_task->pid, err_code);
     sched_yield();
     __not_reached();
@@ -709,6 +710,40 @@ sys_ioctl(int fd, int cmd, int arg)
     return f->fops->ioctl(f, (unsigned long) cmd, (unsigned long) arg);
 }
 
+int
+sys_pipe(int *fildes)
+{
+    int i, spc = 0;
+    int kfds[2] = { -1, -1 };
+    int rc;
+
+    if (verify_buffer(fildes, sizeof(int) * 2))
+        return -EFAULT;
+
+    /* check if there is enough space in the file_table */
+    for (i = 0; i < FD_MAX; i ++)
+        if (current_task->file_table[i] == NULL) {
+            if (kfds[0] == -1) {
+                kfds[0] = i;
+            } else if (kfds[1] == -1) {
+                kfds[1] = i;
+                break;
+            }
+        }
+
+    if (kfds[0] == -1 || kfds[1] == -1)
+        return -EMFILE;
+
+    rc = do_pipe(current_task, kfds);
+    if (rc)
+        return rc;
+
+    fildes[0] = kfds[0];
+    fildes[1] = kfds[1];
+
+    return 0;
+}
+
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
@@ -748,6 +783,8 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_kill((int) a, (int) b);
         case 0x29:
             return sys_dup((int) a);
+        case 0x2a:
+            return sys_pipe((int *) a);
         case 0x30:
             return sys_signal((int) a, (sighandler_t) b);
         case 0x36:

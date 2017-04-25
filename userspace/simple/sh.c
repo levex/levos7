@@ -29,6 +29,8 @@ process_cmd(char *b)
             rc = waitpid(pid, &status, 0);
             if (WIFEXITED(status))
                 printf("Exit code: %d\n", WEXITSTATUS(status));
+            else if (WIFSIGNALED(status))
+                printf("Killed by signal: %d\n", WTERMSIG(status));
             else
                 printf("Weird!\n");
             return;
@@ -85,6 +87,7 @@ main(int argc, char **argvp)
         volatile char c = 0;
 prompt:
         printf(the_prompt);
+        //fflush(stdout);
         //write(1, "lOS $ ", 6);
 read_more:
         /*read(0, (char *) &c, 1);

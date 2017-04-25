@@ -25,6 +25,9 @@ do_fatal_signal(struct task *task, int signal)
 {
     //printk("task pid=%d caught fatal signal %s\n", task->pid, signal_to_string(signal));
 
+    task->owner->status = TASK_DEATH_BY_SIGNAL;
+    task->owner->exit_code = signal;
+
     task_exit(task);
     if (task == current_task)
         sched_yield();
