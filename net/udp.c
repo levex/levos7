@@ -187,7 +187,7 @@ udp_sock_write(struct socket *sock, void *buf, size_t len)
     if (priv == NULL)
         return -ENOTCONN;
 
-    net_printk("UDP socket write! from %pI:%d to %pI:%d\n", sock->sock_ni->ni_src_ip,
+    printk("UDP socket write! from %pI:%d to %pI:%d\n", sock->sock_ni->ni_src_ip,
             priv->usp_srcport, priv->usp_dstip, priv->usp_dstport);
 
     pkt = udp_new_packet(sock->sock_ni, priv->usp_srcport, priv->usp_dstip,

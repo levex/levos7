@@ -18,6 +18,7 @@ load_elf(struct file *f, char **argvp, char **envp)
     elf_header_t header;
     elf_program_header_t *ph;
     elf_section_header_t *sh;
+    uintptr_t last_page = 0;
 
     /* validate ELF file */
     file_seek(f, 0);
@@ -52,14 +53,48 @@ load_elf(struct file *f, char **argvp, char **envp)
         case 0: /* NULL */
             break;
         case 1:; /* LOAD */
-            /*printk("LOAD: offset 0x%x vaddr 0x%x"
+            uint32_t pg_offs = ph->p_vaddr & 0x00000fff;
+            uint32_t file_page = PG_RND_DOWN(ph->p_offset);
+            uint32_t mem_page = PG_RND_DOWN(ph->p_vaddr);
+            uint32_t mem_end, read_bytes, zero_bytes;
+
+            if (ph->p_filesz > 0) {
+                read_bytes = pg_offs + ph->p_filesz;
+                zero_bytes = (PG_RND_UP(pg_offs + ph->p_memsz)
+                                - read_bytes);
+            } else {
+                read_bytes = 0;
+                zero_bytes = PG_RND_UP(pg_offs + ph->p_memsz);
+            }
+
+            mem_end = mem_page + read_bytes + zero_bytes;
+#define PF_W 2
+            int writeable = ph->p_flags & PF_W;
+
+            //printk("total size 0x%x\n", t_size);
+            struct vm_area *vma
+                = vm_area_create_insert_curr(mem_page,
+                                             mem_end,
+                                             writeable ? VMA_WRITEABLE : 0);
+            if (!vma) {
+                free(ph);
+                printk("ELF: CRITICAL: failed to create a VMA\n");
+                return -EINVAL;
+            }
+
+            vma_set_mapping(vma, f, file_page, read_bytes);
+
+            /*printk("LOAD: offset 0x%x vaddr 0x%x "
                     "paddr 0x%x filesz 0x%x memsz 0x%x\n",
                         ph->p_offset, ph->p_vaddr, ph->p_paddr,
                         ph->p_filesz, ph->p_memsz);*/
+#if 0
             for(size_t i = 0; i < ph->p_memsz; i += 0x1000) {
                 uintptr_t page = palloc_get_page();
 #define PF_W 2
                 map_page_curr(page, ph->p_vaddr + i, 1);
+                if (ph->p_vaddr + i > last_page)
+                    last_page = ph->p_vaddr + i;
             }
             __flush_tlb();
 
@@ -73,17 +108,20 @@ load_elf(struct file *f, char **argvp, char **envp)
             /* mark the pages RO */
             for(size_t i = ph->p_vaddr; i < ph->p_vaddr + ph->p_memsz; i += 0x1000) {
                 if (!(ph->p_flags & PF_W)) {
-                    page_t *p = get_page_from_curr(i);
-                    if (p)
+                    page_t *p = get_page_from_curr(PG_RND_DOWN(i));
+                    if (p && 0) /* XXX: ummm, something is broken */
                         pte_mark_read_only(p);
                 }
             }
             free(buf);
+#endif
             break;
         default:
             break;
         }
     }
+
+    //vma_dump(current_task);
 
 #ifdef CONFIG_ELF_DO_SECTIONS
     sh = malloc(header.e_shentsize * header.e_shnum);
@@ -137,6 +175,9 @@ finish:
     current_task->bstate.entry = header.e_entry;
     current_task->bstate.argvp = argvp;
     current_task->bstate.envp = envp;
+    last_page = PG_RND_DOWN(last_page) + 0x1000;
+    current_task->bstate.actual_brk = last_page + 0x1000;
+    current_task->bstate.logical_brk = current_task->bstate.actual_brk;
     return 0;
 }
 
@@ -147,6 +188,8 @@ exec_elf()
     if (!temp_stack)
         return -ENOMEM;
     current_task->bstate.switch_stack = (void *) temp_stack;
+
+    //printk("switching stack...\n");
 
     DISABLE_IRQ();
     memset((void *) temp_stack, 0, sizeof(temp_stack));
@@ -244,6 +287,8 @@ do_exec_elf(void)
     memset((void *) VIRT_BASE - 0x1000, 0, 0x1000);
 
     do_args_stack(&stack, bs->argvp, bs->envp);
+
+    //printk("start of binary is at 0x%x\n", bs->entry);
 
     asm volatile ( "movl %%eax, %%esp;"
                    "movl %%eax, %%ebp;"

@@ -1,6 +1,7 @@
 KERN_NAME=kernel.img
 KERN_SYM=kernel.sym
 LEVOS_CONFIG_FILE=LConfig
+LEVOS_MAP_FILE=kernel.map
 ARCH=x86
 
 QEMU_OPTS=-serial stdio -no-reboot
@@ -49,7 +50,11 @@ depend:
 
 $(KERN_NAME): $(OBJS)
 	@echo "  LD       $@"
-	@$(LD) $(LDFLAGS) -T arch/$(ARCH)/linker.ld -o $(KERN_NAME) $(OBJS)
+	@$(LD) $(LDFLAGS) -T arch/$(ARCH)/linker.ld -o $(KERN_NAME) $(OBJS) -Wl,-Map=$(LEVOS_MAP_FILE)
+	@cat kernel.map | egrep '^\W*0x00000000c.*' | egrep -v '\.' | tr -s ' ' | sed -e 's/0x00000000//' | sort > kernel.map.small
+	@python gen_map.py
+	@$(CC) $(CFLAGS) -c kernel.map.s -o kernel.map.s.o
+	@$(LD) $(LDFLAGS) -T arch/$(ARCH)/linker.ld -o $(KERN_NAME) $(OBJS) kernel.map.s.o
 
 preprocess: $(KERN_NAME)
 	@echo "  PP       $(KERN_NAME)"

@@ -28,7 +28,6 @@ ext2_find_file_inode(struct filesystem *fs, char *path)
         ino = ext2_read_directory(fs, ino, pch);
         if (ino < 0) {
             free(fn);
-            printk("NOT FOUND FUCKED\n");
             return -ENOENT;
         }
         pch = strtok_r(0, "/", &lasts);
@@ -217,6 +216,15 @@ ext2_read_file(struct file *f, void *buf, size_t count)
     int total;
     int bs = EXT2_PRIV(f->fs)->blocksize;
 
+    /* determine if there is things left to read */
+    struct ext2_inode *theinode = malloc(sizeof(*theinode));
+    if (!theinode)
+        return -ENOMEM;
+    ext2_read_inode(f->fs, theinode, inode);
+
+    if (f->fpos >= theinode->size)
+        return 0;
+
     /* determine how many blocks do we need */
     int blocks = count / bs;
     int off = count % bs;
@@ -228,6 +236,8 @@ ext2_read_file(struct file *f, void *buf, size_t count)
 
     int start_block = f->fpos / bs;
     uint32_t end = f->fpos + count;
+    if (end > theinode->size)
+        end = theinode->size;
     int end_block = end / bs;
     uint32_t end_size = end - end_block * bs;
     uint32_t to_read = end - f->fpos;

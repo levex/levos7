@@ -156,41 +156,52 @@ copy_array_from_user(char **ptr, int max)
 
 
 static int
-sys_open(char *filename, int flags, int mode)
+sys_open(char *__filename, int flags, int mode)
 {
     struct file *f;
     struct task *task = current_task;
-    int i;
+    char *filename;
+    int i, need_free = 0;
 
-    if (verify_buffer_string(filename, PATH_MAX))
+    if (verify_buffer_string(__filename, PATH_MAX))
         return -EFAULT;
+
+    /* can I derefence this? fixme */
+    if (__filename[0] != '/') {
+        filename = __canonicalize_path(current_task->cwd, __filename);
+        need_free = 1;
+    } else filename = __filename;
 
     f = vfs_open(filename);
     if (IS_ERR(f)) {
         int err = PTR_ERR(f);
-        printk("err is %s\n", errno_to_string(err));
         if (err == -ENOENT) {
             if (flags & O_CREAT) {
                 f = vfs_create(filename);
                 if (IS_ERR(f)) {
-                    printk("FATAL\n");
+                    if (need_free) free(filename);
                     return PTR_ERR(f);
                 }
 
                 goto xc;
             }
 
+            if (need_free) free(filename);
             return -ENOENT;
         }
 
+        if (need_free) free(filename);
         return err;
     }
 
-    if (f->isdir && (flags & O_WRONLY || flags & O_RDWR))
+    if (f->isdir && (flags & O_WRONLY || flags & O_RDWR)) {
+        if (need_free) free(filename);
         return -EISDIR;
+    }
     
     if (flags & O_EXCL && flags & O_CREAT) {
         vfs_close(f);
+        if (need_free) free(filename);
         return -EEXIST;
     }
 
@@ -199,10 +210,12 @@ xc:
         if (task->file_table[i] == NULL) {
             task->file_table[i] = f;
             f->refc ++;
+            if (need_free) free(filename);
             return i;
         }
     }
     
+    if (need_free) free(filename);
     return -EMFILE;
 }
 
@@ -240,15 +253,29 @@ sys_getpid(void)
 }
 
 static int
-sys_stat(char *fn, struct stat *st)
+sys_stat(char *__fn, struct stat *st)
 {
-    if (verify_buffer_string(fn, PATH_MAX))
+    char *fn, need_free = 0;
+    int rc;
+
+    if (verify_buffer_string(__fn, PATH_MAX))
         return -EFAULT;
 
     if (verify_buffer(st, sizeof(*st)))
         return -EFAULT;
 
-    return vfs_stat(fn, st);
+    if (__fn[0] != '/') {
+        fn =  __canonicalize_path(current_task->cwd, __fn);
+        need_free = 1;
+    } else fn = __fn;
+
+    //printk("canonical filename: %s\n", fn);
+
+    rc = vfs_stat(fn, st);
+    if (need_free)
+        free(fn);
+
+    return rc;
 }
 
 static int
@@ -283,8 +310,10 @@ sys_execve(char *fn, char **argvp, char **envp)
     memset(kfn, 0, strlen(fn) + 1);
     memcpy(kfn, fn, strlen(fn));
 
+    //printk("%s: %s\n", __func__, fn);
+
     struct file *f = vfs_open(kfn);
-    if (f == NULL)
+    if (f == NULL || IS_ERR(f))
         return -ENOENT;
 
     __flush_tlb();
@@ -297,11 +326,19 @@ sys_execve(char *fn, char **argvp, char **envp)
     if (IS_ERR(envp) && PTR_ERR(envp) == -EFAULT)
         return -EFAULT;
 
+    vma_unload_all(current_task);
+    map_unload_user_pages(current_task->mm);
+    
+
     rc = load_elf(f, argvp, envp);
     if (rc)
         return rc;
 
+    //printk("executing elf...\n");
+
     exec_elf();
+
+    printk("WAAAAAT\n");
     return rc;
 }
 
@@ -398,6 +435,8 @@ sys_uname(struct uname *un)
 
     do_uname(un);
 
+    //vma_dump(current_task);
+
     return 0;
 }
 
@@ -461,8 +500,8 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
         return -EFAULT;
 
     /* TODO: support the opts field */
-    if (opts != 0)
-        return -EINVAL;
+    //if (opts != 0)
+        //return -EINVAL;
 
     if (pid == -1) {
         /* wait for any child */
@@ -744,6 +783,91 @@ sys_pipe(int *fildes)
     return 0;
 }
 
+int
+sys_chdir(char *fn)
+{
+    int len;
+    char *kbuf;
+    char *ptr;
+
+    if (verify_buffer_string(fn, PATH_MAX))
+        return -EFAULT;
+
+    len = strlen(fn);
+    kbuf = malloc(len + 1);
+    if (!kbuf)
+        return -ENOMEM;
+
+    memset(kbuf, 0, len + 1);
+    memcpy(kbuf, fn, len);
+
+    ptr = canonicalize_path(current_task->cwd, kbuf);
+    if (IS_ERR(ptr))
+        return PTR_ERR(ptr);
+
+    free(current_task->cwd);
+    free(kbuf);
+
+    current_task->cwd = ptr;
+    return 0;
+}
+
+int
+sys_sbrk(int incr)
+{
+    struct task *t = current_task;
+    struct bin_state *bs = &t->bstate;
+    uintptr_t ret;
+
+    //printk("%s: incr: %d\n", __func__, incr);
+
+    if (incr < 0) {
+        printk("WARNING: application %d is trying to free memory\n",
+                t->pid);
+        return 0;
+    }
+
+    if (bs->logical_brk + incr < bs->actual_brk) {
+        ret = bs->logical_brk;
+        bs->logical_brk += incr;
+        //printk("STATE: actual: 0x%x logical 0x%x ret 0x%x\n",
+                //bs->actual_brk, bs->logical_brk, ret);
+        return ret;
+    } else {
+        int num = (incr / 0x1000) + 1, i;
+
+        for (i = 0; i < num; i ++) {
+            uintptr_t p = palloc_get_page();
+            map_page_curr(p, bs->actual_brk, 1);
+            bs->actual_brk += 0x1000;
+        }
+        ret = bs->logical_brk;
+        bs->logical_brk += incr;
+        //printk("STATE: actual: 0x%x logical 0x%x ret 0x%x\n",
+                //bs->actual_brk, bs->logical_brk, ret);
+        return ret;
+    }
+    return -ENOMEM;
+}
+
+int
+sys_getcwd(char *buf, unsigned long size)
+{
+    if (!size || !buf)
+        return -EINVAL;
+
+    if (verify_buffer(buf, size))
+        return -EFAULT;
+
+    if ((strlen(current_task->cwd) + 1) > size)
+        return -ERANGE;
+
+    memset(buf, 0, size);
+
+    memcpy(buf, current_task->cwd, strlen(current_task->cwd));
+
+    return 0;
+}
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
@@ -767,6 +891,8 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_waitpid((pid_t) a, (int *) b, (int) c);
         case 0xB:
             return sys_execve((char *) a, (char **) b, (char **) c);
+        case 0xC:
+            return sys_chdir((char *) a);
         case 0x11:
             return sys_socket((int) a, (int) b, (int) c);
         case 0x12:
@@ -779,6 +905,8 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_fstat((int) a, (struct stat *) b);
         case 0x1f:
             return sys_connect((int) a, (void *) b, (size_t) c);
+        case 0x23:
+            return sys_sbrk((int) a);
         case 0x25:
             return sys_kill((int) a, (int) b);
         case 0x29:
@@ -801,6 +929,8 @@ syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
             return sys_uname((struct uname *) a);
         case 0x84:
             return sys_getpgid((int) a);
+        case 0xb7:
+            return sys_getcwd((char *) a, (unsigned long) b);
     }
 
     syscall_undefined(no);

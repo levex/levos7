@@ -76,6 +76,8 @@ sched_init(void)
     current_task->state = TASK_RUNNING;
     current_task->time_ran = 0;
     signal_init(current_task);
+    list_init(&current_task->vma_list);
+    spin_lock_init(&current_task->vm_lock);
 
     //memset(all_tasks, 0, sizeof(struct task *) * 128);
     //all_tasks[0] = current_task;
@@ -144,7 +146,10 @@ __task_init(struct task *task)
     task->exit_code = 0;
     task->mm = kernel_pgd;
     task->flags = 0;
+    task->cwd = strdup("/");
     list_init(&task->children_list);
+    list_init(&task->vma_list);
+    spin_lock_init(&task->vm_lock);
     signal_init(task);
     task->owner = process_create(task);
     if (!task->owner) {
@@ -323,6 +328,7 @@ task_exit(struct task *t)
     //printk("TASK EXIT for %d\n", t->pid);
     
     /* queue a SIGCHLD to the parent */
+    //printk("would send signal SIGCHLD to %d from %d\n", t->ppid, t->pid);
     send_signal(get_task_for_pid(t->ppid), SIGCHLD);
 
     /* check if there are waiters */
@@ -344,6 +350,7 @@ task_exit(struct task *t)
     }
 
     close_filetable(t);
+    free(t->cwd);
     free(t->irq_stack_bot);
     list_remove(&t->all_elem);
     free(t);
@@ -528,6 +535,12 @@ create_user_task_fork(void (*func)(void))
 
     /* copy the filetable */
     copy_filetable(new, current_task);
+
+    /* copy VMAs */
+    copy_vmas(new, current_task);
+
+    free(new->cwd);
+    new->cwd = strdup(current_task->cwd);
 
     return new;
 }

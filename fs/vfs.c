@@ -2,6 +2,7 @@
 #include <levos/fs.h>
 #include <levos/ext2.h>
 #include <levos/string.h>
+#include <levos/list.h>
 
 #define MAX_MOUNTS 256
 
@@ -51,7 +52,7 @@ int __vfs_set_mount(char *p, struct device *dev, struct filesystem *fs)
     m->dev = dev;
     mounts[nmounts] = m;
     nmounts ++;
-    printk("vfs: mounted %s on %s to %s\n", fs->fs_ops->fsname, dev->name, p);
+    //printk("vfs: mounted %s on %s to %s\n", fs->fs_ops->fsname, dev->name, p);
     if (strcmp(p, "/") == 0)
         root_mount = m;
     return 0;
@@ -101,7 +102,7 @@ struct filesystem *vfs_mount_fs(struct device *dev)
     {
         if (fs_ops_s[i]->mount) {
             fs = fs_ops_s[i]->mount(dev);
-            if (fs)
+            if (fs && !IS_ERR(fs))
                 return fs;
         }
     }
@@ -122,6 +123,8 @@ int vfs_mount(char *path, struct device *dev)
     struct filesystem *fs = vfs_mount_fs(dev);
     if (!fs)
         return -ENXIO;
+
+    printk("%s: fs->name: %s\n", __func__, fs->fs_ops->fsname);
 
     return __vfs_set_mount(path, dev, fs);
 }
@@ -157,11 +160,13 @@ struct file *vfs_open(char *path)
 {
     struct mount *m = find_mount(path);
 
+    char *exppath = path + strlen(m->point) - 1;
+
     //printk("experimental path would be for \"%s\": \"%s\"\n",
-            //path, path + strlen(m->point) - 1);
+            //path, exppath);
 
     /* FIXME: the path is wrong if multiple mounts exist */
-    return m->fs->fs_ops->open(m->fs, path);
+    return m->fs->fs_ops->open(m->fs, exppath);
 }
 
 void
@@ -233,6 +238,164 @@ int vfs_init(void)
     fs_ops_n = 0;
 
     ext2_init();
+    procfs_init();
 
     return 0;
+}
+
+#define PATH_SEPARATOR '/'
+#define PATH_SEPARATOR_STRING "/"
+#define PATH_UP  ".."
+#define PATH_DOT "."
+
+struct path_list {
+    struct list_elem elem;
+    char *s;
+};
+
+/**
+ * canonicalize_path: Canonicalize a path.
+ *
+ * @param cwd   Current working directory
+ * @param input Path to append or canonicalize on
+ * @returns An absolute path string
+ */
+char *__canonicalize_path(char *cwd, char *input) {
+	struct list out;
+
+    list_init(&out);
+
+	/*
+	 * If we have a relative path, we need to canonicalize
+	 * the working directory and insert it into the stack.
+	 */
+	if (strlen(input) && input[0] != PATH_SEPARATOR) {
+		/* Make a copy of the working directory */
+		char *path = malloc((strlen(cwd) + 1) * sizeof(char));
+		memcpy(path, cwd, strlen(cwd) + 1);
+
+		/* Setup tokenizer */
+		char *pch;
+		char *save;
+		pch = strtok_r(path,PATH_SEPARATOR_STRING,&save);
+
+		/* Start tokenizing */
+		while (pch != NULL) {
+			/* Make copies of the path elements */
+			char *s = malloc(sizeof(char) * (strlen(pch) + 1));
+            struct path_list *pl = malloc(sizeof(*pl));
+			memcpy(s, pch, strlen(pch) + 1);
+            pl->s = s;
+			/* And push them */
+			list_push_back(&out, &pl->elem);
+			pch = strtok_r(NULL,PATH_SEPARATOR_STRING,&save);
+		}
+		free(path);
+	}
+
+	/* Similarly, we need to push the elements from the new path */
+	char *path = malloc((strlen(input) + 1) * sizeof(char));
+	memcpy(path, input, strlen(input) + 1);
+
+	/* Initialize the tokenizer... */
+	char *pch;
+	char *save;
+	pch = strtok_r(path,PATH_SEPARATOR_STRING,&save);
+
+	/*
+	 * Tokenize the path, this time, taking care to properly
+	 * handle .. and . to represent up (stack pop) and current
+	 * (do nothing)
+	 */
+	while (pch != NULL) {
+		if (!strcmp(pch,PATH_UP)) {
+			/*
+			 * Path = ..
+			 * Pop the stack to move up a directory
+			 */
+            if (!list_empty(&out)) {
+                struct list_elem *elem = list_pop_back(&out);
+                if (elem) {
+                    struct path_list *n = list_entry(elem, struct path_list, elem);
+                    free(n->s);
+                    free(n);
+                }
+            }
+		} else if (!strcmp(pch,PATH_DOT)) {
+			/*
+			 * Path = .
+			 * Do nothing
+			 */
+		} else {
+			/*
+			 * Regular path, push it
+			 * XXX: Path elements should be checked for existence!
+			 */
+			char *s = malloc(sizeof(char) * (strlen(pch) + 1));
+            struct path_list *pl = malloc(sizeof(*pl));
+			memcpy(s, pch, strlen(pch) + 1);
+            pl->s = s;
+            list_push_back(&out, &pl->elem);
+		}
+		pch = strtok_r(NULL, PATH_SEPARATOR_STRING, &save);
+	}
+	free(path);
+
+	/* Calculate the size of the path string */
+	size_t size = 0;
+    struct list_elem *elem;
+	list_foreach_raw(&out, elem) {
+        struct path_list *item = list_entry(elem, struct path_list, elem);
+		/* Helpful use of our foreach macro. */
+		size += strlen(item->s) + 1;
+	}
+
+	/* join() the list */
+	char *output = malloc(sizeof(char) * (size + 1));
+	char *output_offset = output;
+	if (size == 0) {
+		/*
+		 * If the path is empty, we take this to mean the root
+		 * thus we synthesize a path of "/" to return.
+		 */
+		output = realloc(output, sizeof(char) * 2);
+		output[0] = PATH_SEPARATOR;
+		output[1] = '\0';
+	} else {
+		/* Otherwise, append each element together */
+		list_foreach_raw(&out, elem) {
+            struct path_list *item = list_entry(elem, struct path_list, elem);
+			output_offset[0] = PATH_SEPARATOR;
+			output_offset++;
+			memcpy(output_offset, item->s, strlen(item->s) + 1);
+			output_offset += strlen(item->s);
+		}
+	}
+
+	/* Clean up the various things we used to get here */
+    while (!list_empty(&out)) {
+        struct path_list *item = list_entry(list_pop_front(&out), struct path_list, elem);
+        free(item->s);
+        free(item);
+    }
+
+    return output;
+}
+
+char *
+canonicalize_path(char *cwd, char *ap)
+{
+    struct stat st;
+    
+    char *output = __canonicalize_path(cwd, ap);
+
+    int rc = vfs_stat(output, &st);
+    if (rc)
+        return ERR_PTR(rc);
+
+    if (!(st.st_mode & S_IFDIR))
+        return -ENOTDIR;
+
+	/* And return a working, absolute path */
+	return output;
 }

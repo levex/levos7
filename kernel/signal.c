@@ -38,6 +38,7 @@ do_fatal_signal(struct task *task, int signal)
 void
 __send_signal(struct task *task, int signal)
 {
+    //printk("%s: to %d from %d, sig: %s\n", __func__, task->pid, current_task->pid, signal_to_string(signal));
     struct signal *sig = malloc(sizeof(*sig));
     if (!sig) {
         printk("CRITICAL: ran out of memory while delivering a signal\n");
@@ -50,7 +51,6 @@ __send_signal(struct task *task, int signal)
     //printk("%s 0x%x\n", __func__, sig->data);
     //dump_registers(sig->data);
 
-    //printk("%s: to %d, sig: %s\n", __func__, task->pid, signal_to_string(signal));
 
     list_push_back(&task->signal.pending_signals, &sig->elem);
 }
@@ -58,6 +58,9 @@ __send_signal(struct task *task, int signal)
 void
 send_signal(struct task *task, int signal)
 {
+    if (task == NULL)
+        return;
+
     __send_signal(task, signal);
 
     if (task == current_task)

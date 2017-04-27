@@ -38,7 +38,7 @@ process_cmd(char *b)
             //memcpy(the_prompt, "oops $ ", 7);
 
             /* child */
-            printf("child\n");
+            printf("child is pid %d\n", getpid());
             char *argvp[] = {
                 "/lol",
                 arg,

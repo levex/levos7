@@ -51,8 +51,8 @@ _start:
 
 1:
 	# Only map the kernel.
-	cmpl $(_kernel_start - 0xC0000000), %esi
-	jl 2f
+	//cmpl $(_kernel_start - 0xC0000000), %esi
+	//jl 2f
 	cmpl $(_kernel_end - 0xC0000000), %esi
 	jge 3f
 
@@ -111,6 +111,8 @@ _start:
 	# Set up the stack.
 	mov $stack_top, %esp
 
+    push %ebx
+    push %eax
 	# Enter the high-level kernel.
 	call kernel_main
 

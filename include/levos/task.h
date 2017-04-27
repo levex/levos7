@@ -8,6 +8,8 @@
 #include <levos/fs.h>
 #include <levos/signal.h>
 #include <levos/list.h>
+#include <levos/vma.h>
+#include <levos/spinlock.h>
 
 
 #define WAIT_CODE(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
@@ -20,6 +22,8 @@ struct bin_state
 {
     uint32_t entry;
     void *switch_stack;
+    uintptr_t actual_brk;
+    uintptr_t logical_brk;
     char **argvp;
     char **envp;
 };
@@ -82,6 +86,11 @@ struct task
     struct bin_state bstate;
 
     struct signal_struct signal;
+
+    char *cwd;
+
+    spinlock_t vm_lock;
+    struct list vma_list;
 
     /*
      * uh, not sure we need this lock, since only the

@@ -66,6 +66,9 @@ strdup(char *s)
         return NULL;
 
     char *r = malloc(strlen(s) + 1);
+    if (!r)
+        return NULL;
+
     memset(r, 0, strlen(s) + 1);
     memcpy(r, s, strlen(s));
     return r;

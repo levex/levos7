@@ -170,32 +170,24 @@ do_user_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
     /* this is likely a nullptr exception */
     if (cr2 < 4096) {
         printk("unable to handle null dereference at 0x%x\n", cr2);
+        dump_registers(regs);
+        vma_dump(current_task);
         send_signal(current_task, SIGSEGV);
     }
 
-    if (!page) {
-        printk("unable to handle a missing page at 0x%x!\n", cr2);
-        send_signal(current_task, SIGSEGV);
-    }
+    if ((page && !*page) || !page) {
+        int rc = vma_handle_pagefault(current_task, cr2);
+        if (rc) {
+            printk("unable to handle a missing page at 0x%x!\n", cr2);
+            dump_registers(regs);
+            vma_dump(current_task);
+            send_signal(current_task, SIGSEGV);
+        }
 
-    /* if a COW page is written then fetch new page and map */
-    if (pte_is_cow(*page)) {
-        /* && regs->error_code & 2 */
-        //printk("page faulted on a COW page\n");
-
-        //send_signal(current_task, SIGSEGV);
-        do_cow(cr2);
         return;
     }
 
-    /* we faulted on a page that is not mapped */
-    page = get_page_from_pgd(current_task->mm, cr2);
-    if (!page) {
-        printk("unable to handle user paging request at 0x%x\n", cr2);
-        send_signal(current_task, SIGSEGV);
-    }
-
-    printk("unable to handle user paging permission error at 0x%x\n", cr2);
+    printk("unable to handle user paging (PTE 0x%x) permission error at 0x%x\n", *page, cr2);
     /* we couldn't handle it, sigsegv */
     send_signal(current_task, SIGSEGV);
     __not_reached();
@@ -220,10 +212,15 @@ handle_pagefault(struct pt_regs *regs)
 
     current_task->sys_regs = regs;
 
+    /* if a COW page is written then fetch new page and map */
+    page = get_page_from_curr(PG_RND_DOWN(cr2));
+    if (page && pte_is_cow(*page)) {
+        do_cow(cr2);
+        return;
+    }
+
     if ((unsigned long) regs->eip > (unsigned long) VIRT_BASE)
         do_kernel_pagefault(regs, cr2);
-
-    page = get_page_from_curr(cr2);
 
     do_user_pagefault(page, regs, cr2);
 }
@@ -262,7 +259,7 @@ map_page(pagedir_t pgd, uint32_t phys_addr, uint32_t virt_addr, int perm)
         /* the page table doesn't exist, get one */
         pagetable_t pgt = na_malloc(0x1000, 0x1000);
         panic_on((int)pgt % 4096, "pagetable allocated is NOT page aligned\n");
-        panic_on(!pgt, "not enough memory to %s\n", __func__);
+        panic_on(!pgt, "not enough memory to %s\n", __func__) + 0x1000;
         memset(pgt, 0, 4096);
 
         /* map the page */
@@ -401,7 +398,7 @@ map_unload_user_pages(pagedir_t pgd)
     /* 767 because the stack needs not be unmapped, we reuse it */
     for (int i = 0; i < 767; i++) {
         if (pgd[i] != 0) {
-            printk("unloaded page table 0x%x - 0x%x\n", i * 4 * 1024 * 1024, (i + 1) * 4096 * 1024);
+            //printk("unloaded page table 0x%x - 0x%x\n", i * 4 * 1024 * 1024, (i + 1) * 4096 * 1024);
             pgd[i] = 0;
         }
     }

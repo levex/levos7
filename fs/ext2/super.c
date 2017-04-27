@@ -17,7 +17,7 @@ struct fs_ops ext2_fs = {
 
 struct filesystem *ext2_mount(struct device *dev)
 {
-    if (dev->type != DEV_TYPE_BLOCK)
+    if (!dev || dev->type != DEV_TYPE_BLOCK)
         return (void *) -ENODEV;
 
     void *buf = malloc(1024);

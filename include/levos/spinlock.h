@@ -2,7 +2,8 @@
 #define __LEVOS_SPINLOCK_H
 
 #include <levos/compiler.h>
-#include <levos/task.h>
+
+struct task;
 
 struct __spinlock_t {
     volatile int value;

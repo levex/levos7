@@ -6,8 +6,11 @@
 size_t
 do_pipe_read(struct pipe *pip, void *buf, size_t len)
 {
-    while (ring_buffer_size(&pip->pipe_buffer) == 0)
+    while (ring_buffer_size(&pip->pipe_buffer) == 0 || pip->pipe_flags & PIPFLAG_WRITE_CLOSED)
         ;
+
+    if (pip->pipe_flags & PIPFLAG_WRITE_CLOSED)
+        return 0;
 
     return ring_buffer_read(&pip->pipe_buffer, buf, len);
 }
@@ -15,6 +18,9 @@ do_pipe_read(struct pipe *pip, void *buf, size_t len)
 size_t
 do_pipe_write(struct pipe *pip, void *buf, size_t len)
 {
+    if (pip->pipe_flags & PIPFLAG_READ_CLOSED)
+        send_signal(current_task, SIGPIPE);
+    
     return ring_buffer_write(&pip->pipe_buffer, buf, len);
 }
 

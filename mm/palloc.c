@@ -43,6 +43,77 @@ palloc_get_page(void)
     return palloc_get_pages(1);
 }
 
+size_t
+palloc_get_free(void)
+{
+    return bitmap_count(&palloc_bitmap, 0, palloc_bitmap.bit_cnt, 0);
+}
+
+size_t
+palloc_get_used(void)
+{
+    return bitmap_count(&palloc_bitmap, 0, palloc_bitmap.bit_cnt, 1);
+}
+
+size_t
+palloc_proc_memfree(int pos, void *buf, size_t len, char *__arg)
+{
+    char __buf[14];
+    int actlen;
+
+    memset(__buf, 0, 14);
+    itoa(palloc_get_free() * 4096, 10, __buf);
+    actlen = strlen(__buf);
+
+    if (pos > actlen)
+        return 0;
+
+    if (pos + len > actlen)
+        len = actlen - pos;
+
+    memcpy(buf, __buf + pos, len);
+    return len;
+}
+
+size_t
+palloc_proc_memused(int pos, void *buf, size_t len, char *__arg)
+{
+    char __buf[14];
+    int actlen;
+
+    memset(__buf, 0, 14);
+    itoa(palloc_get_used() * 4096, 10, __buf);
+    actlen = strlen(__buf);
+
+    if (pos > actlen)
+        return 0;
+
+    if (pos + len > actlen)
+        len = actlen - pos;
+
+    memcpy(buf, __buf + pos, len);
+    return len;
+}
+size_t
+palloc_proc_memtotal(int pos, void *buf, size_t len, char *__arg)
+{
+    char __buf[14];
+    int actlen;
+
+    memset(__buf, 0, 14);
+    itoa(palloc_bitmap.bit_cnt * 4096, 10, __buf);
+    actlen = strlen(__buf);
+
+    if (pos > actlen)
+        return 0;
+
+    if (pos + len > actlen)
+        len = actlen - pos;
+
+    memcpy(buf, __buf + pos, len);
+    return len;
+}
+
 void
 palloc_init(void)
 {

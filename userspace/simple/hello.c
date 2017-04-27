@@ -58,14 +58,17 @@ main(int argc, char **argvp)
         wfd = fds[1];
         printf("created pipe: rc %d rfd %d wfd %d errno %d\n",
                 rc, rfd, wfd, errno);
+ 
+        if (fork()) {
+            rc = write(wfd, "Pipe test worked", 16);
+            printf("after write in %d: rc %d errno %d\n", getpid(), rc, errno);
+        } else {
+            rc = read(rfd, buf, 16);
+            printf("after read : rc %d errno %d\n", rc, errno);
+            printf("read in %d: \"%s\"\n", getpid(), buf);
+            exit(1);
+        }
 
-        rc = write(wfd, "Pipe test worked", 16);
-        printf("after write: rc %d errno %d\n", rc, errno);
-
-        rc = read(rfd, buf, 16);
-        printf("after read : rc %d errno %d\n", rc, errno);
-
-        printf("read: \"%s\"\n", buf);
         return 0;
     }
 

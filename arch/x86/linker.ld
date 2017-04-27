@@ -23,6 +23,10 @@ SECTIONS
 	.data ALIGN (4K) : AT (ADDR (.data) - 0xC0000000)
 	{
 		*(.data)
+
+		__kernel_map_start = .;
+		KEEP(*(.kernel_map))
+		__kernel_map_end = .;
 	}
     _bss_start = .;
 	.bss ALIGN (4K) : AT (ADDR (.bss) - 0xC0000000)

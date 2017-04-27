@@ -10,7 +10,7 @@ CC=i686-levos-gcc
 
 .PHONY: all clean
 
-all: hello sh echo
+all: hello sh echo lsh cat ls memstat uname
 
 
 clean:

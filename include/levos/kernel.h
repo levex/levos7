@@ -23,6 +23,7 @@ extern void *_kernel_end, *_kernel_start;
 #include <levos/limits.h>
 
 #define ROUND_DOWN(x, s) ((x) & ~((s)-1))
+#define ROUND_UP(N, S) ((((N) + (S) - 1) / (S)) * (S))
 
 void printk(char *, ...);
 void __noreturn panic(char *, ...);

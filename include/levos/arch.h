@@ -12,7 +12,7 @@ extern int arch_get_total_ram(void);
 
 #include <levos/x86.h>
 
-void arch_early_init(void);
+void arch_early_init(uint32_t, void *);
 void arch_preirq_init(void);
 void arch_late_init(void);
 

@@ -1,0 +1,1 @@
+sudo qemu-system-x86_64 -kernel kernel.img -m 256 -serial stdio -monitor null  -no-reboot -nographic -drive format=raw,media=disk,index=0,cache=none,file=disk.img -netdev tap,br=bridge0,script=./qemu-ifup.sh,downscript=./qemu-ifdown.sh,id=corenet -device e1000,netdev=corenet

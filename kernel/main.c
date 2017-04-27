@@ -25,6 +25,7 @@
 #endif
 #include <levos/ext2.h> /* TODO remove */
 #include <levos/tty.h>
+#include <levos/multiboot.h>
 
 void
 bss_init(void)
@@ -35,7 +36,7 @@ bss_init(void)
 static spinlock_t setup_lock;
 
 __noreturn void
-kernel_main(void)
+kernel_main(uint32_t boot_sig, void *ptr)
 {
     char c;
 
@@ -44,13 +45,17 @@ kernel_main(void)
     spin_lock_init(&setup_lock);
     spin_lock(&setup_lock);
 
-    arch_early_init();
+    arch_early_init(boot_sig, ptr);
 
     palloc_init();
 
     console_init();
 
     printk("LevOS %d.%d booting...\n", LEVOS_VERSION_MAJOR, LEVOS_VERSION_MINOR);
+    if (boot_sig == 0x2BADB002)
+        printk("  booted by a multiboot compliant bootloader\n");
+    printk("mm: total RAM: %d bytes (~%d KB)\n", arch_get_total_ram(),
+            arch_get_total_ram() / 1024);
     printk("main: enabling interrupts\n");
     arch_preirq_init();
     ENABLE_IRQ();
@@ -105,6 +110,7 @@ do_first_init()
     current_task->ppid = current_task->pid;
     current_task->pgid = current_task->pid;
     current_task->sid  = current_task->pid;
+    current_task->cwd  = strdup("/");
 
     /* map a stack */
     uint32_t p = palloc_get_page();
@@ -190,6 +196,8 @@ init_task(void)
     __path_free(p);
 #endif
 
+    vfs_mount("/proc/", NULL);
+
 #ifdef CONFIG_RING_BUFFER_TEST
     struct ring_buffer rb;
     char *rb_test_string = "123456789ABCDEF0";
@@ -250,6 +258,7 @@ init_task(void)
 
     char *init_envp[] = {
         "HOME=/",
+        "PATH=/:/bin",
         "USER=root",
         NULL,
     };
@@ -292,6 +301,8 @@ late_init(void)
     struct net_info *ni = &net_get_default()->ndev_ni;
     test_tcp(ni);
 #endif
+
+    mapping_init();
 
     /* use condvar */
     spin_unlock(&setup_lock);

@@ -309,7 +309,7 @@ void *PREFIX(na_malloc)(size_t req_size, size_t align)
 {
     void *ret = __na_malloc(req_size, align);
     if (ret == NULL)
-        panic("OUT OF MEMORY!\n");
+        panic("OUT OF MEMORY due to request of %d bytes!\n", req_size);
     //printk("%s: ret 0x%x -> 0x%x\n", __func__, ret, ret + req_size);
     return ret;
 }

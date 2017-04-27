@@ -4,6 +4,7 @@
 #include <levos/intr.h>
 #include <levos/syscall.h>
 #include <levos/task.h>
+#include <levos/multiboot.h>
 
 #include <stdint.h>
 
@@ -11,8 +12,10 @@
 #include "tss.h"
 #include "idt.h"
 
+int __x86_total_ram;
+
 void
-arch_early_init(void)
+arch_early_init(uint32_t boot_sig, void *ptr)
 {
     tss_init();
 
@@ -21,6 +24,14 @@ arch_early_init(void)
     idt_init();
 
     *(uint16_t *)(0xC03FF000) = 0x1643;
+
+    __x86_total_ram = 0;
+
+    if (boot_sig == MULTIBOOT_SIGNATURE)
+        multiboot_handle(ptr);
+
+    if (!__x86_total_ram)
+        __x86_total_ram = 256 * 1024 * 1024;
 }
 
 void
@@ -97,6 +108,5 @@ arch_get_console(void)
 int
 arch_get_total_ram(void)
 {
-    /* FIXME: use mboot to figure out total RAM */
-    return 256 * 1024 * 1024 / 4096;
+    return __x86_total_ram;
 }

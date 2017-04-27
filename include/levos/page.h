@@ -44,6 +44,7 @@ typedef pde_t       *pagedir_t;
 #define PG_R_RW       1
 
 #define PG_RND_DOWN(a) ROUND_DOWN(a, 0x1000)
+#define PG_RND_UP(a) ROUND_UP(a, 0x1000)
 
 void paging_init(void);
 int map_page(pagedir_t, uint32_t, uint32_t, int);
