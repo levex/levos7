@@ -273,10 +273,10 @@ uint8_t keyboard_to_ascii(uint8_t key)
                 key = KEY_AT;
                 break;
             case '3':
-                key = KEY_EXCLAMATION;
+                key = KEY_HASH;
                 break;
             case '4':
-                key = KEY_HASH;
+                key = KEY_DOLLAR;
                 break;
             case '5':
                 key = KEY_PERCENT;
