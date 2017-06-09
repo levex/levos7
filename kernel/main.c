@@ -26,6 +26,7 @@
 #include <levos/ext2.h> /* TODO remove */
 #include <levos/tty.h>
 #include <levos/multiboot.h>
+#include <levos/time.h>
 
 void
 bss_init(void)
@@ -56,6 +57,9 @@ kernel_main(uint32_t boot_sig, void *ptr)
         printk("  booted by a multiboot compliant bootloader\n");
     printk("mm: total RAM: %d bytes (~%d KB)\n", arch_get_total_ram(),
             arch_get_total_ram() / 1024);
+
+    //printk("so far used: %d of %d, free: %d\n", palloc_get_used(), 
+            //palloc_get_total(), palloc_get_free());
     printk("main: enabling interrupts\n");
     arch_preirq_init();
     ENABLE_IRQ();
@@ -65,9 +69,13 @@ kernel_main(uint32_t boot_sig, void *ptr)
 
     paging_init();
 
+    virt_kmap_init();
+
     heap_init();
 
-    virt_kmap_init();
+    arch_very_late_init();
+
+    palloc_reinit();
     
     sched_init();
 
@@ -107,33 +115,41 @@ do_first_init()
     DISABLE_IRQ();
 
     /* setup the task structure for exposure to userspace */
-    current_task->ppid = current_task->pid;
+    current_task->ppid = 0;//current_task->pid;
     current_task->pgid = current_task->pid;
     current_task->sid  = current_task->pid;
     current_task->cwd  = strdup("/");
+    //printk("ALLOC %s %d: 0x%x\n", __func__, current_task->pid, current_task->cwd);
 
     /* map a stack */
-    uint32_t p = palloc_get_page();
-    map_page_curr(p, VIRT_BASE - 4096, 1);
+    vma_try_prefault(current_task, VIRT_BASE - 0x1000, 0x1000);
+    //uint32_t p = palloc_get_page();
+    //map_page_curr(p, VIRT_BASE - 4096, 1);
 
     /* map it in the kernel */
-    map_page_curr(p, (unsigned long)0xD0000000 - 0x1000, 0);
-    __flush_tlb();
+    //map_page_curr(p, (unsigned long)0xD0000000 - 0x1000, 0);
+    //__flush_tlb();
 
     /* zero it */
-    memset((void *) VIRT_BASE - 0x1000, 0, 0x1000);
+    //memset((void *) VIRT_BASE - 0x1000, 0, 0x1000);
 
     do_args_stack(&stack, argvp, envp);
+
+    signal_reset(current_task);
 
     /* it needs a filetable */
     setup_filetable(current_task);
 
     /* setup to use tty0 */
-    extern struct device console_device;
-    struct tty_device *tty = tty_new(&console_device, NULL);
+    extern struct device *default_user_device;
+    struct tty_device *tty = tty_new(default_user_device);
+    //serial_signup(tty);
+    kbd_signup(tty);
     tty->tty_fg_proc = current_task->pid;
     struct file *f_in = tty_get_file(tty);
-    current_task->file_table[1] = current_task->file_table[0] = f_in;
+    f_in->refc = 3;
+    current_task->file_table[1] = current_task->file_table[2] = current_task->file_table[0] = f_in;
+    current_task->ctty = tty;
 
     /* TSS */
     tss_update(current_task);
@@ -196,7 +212,8 @@ init_task(void)
     __path_free(p);
 #endif
 
-    vfs_mount("/proc/", NULL);
+    vfs_mount("/proc", NULL);
+    vfs_mount("/dev", (void *) 1);
 
 #ifdef CONFIG_RING_BUFFER_TEST
     struct ring_buffer rb;
@@ -221,7 +238,7 @@ init_task(void)
 #endif
 
     /* open the init executable */
-    struct file *f = vfs_open("/init");
+    struct file *f = vfs_open("/usr/bin/dash");
 #ifdef CONFIG_EXT2_TEST
     struct ext2_inode inode;
     int ino = ext2_new_inode(f->fs, &inode);
@@ -240,7 +257,7 @@ init_task(void)
         ext2_write_file(f, the_data, strlen(the_data));
     }
 
-    f = vfs_open("/init");
+    f = vfs_open("/usr/bin/dash");
 #endif
 
     if (f == NULL || ((int) f < 0 && (int)f > -4096))
@@ -251,14 +268,14 @@ init_task(void)
     activate_pgd(current_task->mm);
 
     char *init_argvp[] = {
-        "/init",
-        "hello",
+        "/usr/bin/dash",
+        //"hello",
         NULL,
     };
 
     char *init_envp[] = {
         "HOME=/",
-        "PATH=/:/bin",
+        "PATH=/:/bin:/usr/bin",
         "USER=root",
         NULL,
     };
@@ -285,6 +302,8 @@ late_init(void)
 
     vfs_init();
 
+    time_init();
+
     net_init();
 
     struct task *pkthndlr = create_kernel_task(packet_processor_thread);
@@ -303,6 +322,8 @@ late_init(void)
 #endif
 
     mapping_init();
+
+    video_console_init();
 
     /* use condvar */
     spin_unlock(&setup_lock);

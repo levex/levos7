@@ -10,7 +10,8 @@ struct pci_ident {
     uint16_t pci_device;
 };
 
-#define PCI_END_IDENT {.pci_vendor = 0xFFFF, .pci_vendor = 0xFFFF}
+#define PCI_IDENT(vend, dev) { .pci_vendor = (vend), .pci_device = (dev) }
+#define PCI_END_IDENT {.pci_vendor = 0xFFFF, .pci_device = 0xFFFF}
 
 struct pci_driver {
     char *name;
@@ -30,6 +31,9 @@ struct pci_device {
     uint32_t pci_bus;
     uint32_t pci_slot;
     uint32_t pci_func;
+
+    uint8_t pci_class;
+    uint8_t pci_subclass;
 
     void *priv;
 };

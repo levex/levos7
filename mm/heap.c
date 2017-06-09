@@ -8,7 +8,7 @@
 #define VERSION 	"1.1"
 #define DEFAULT_ALIGNMENT	16ul//4ul				///< This is the byte alignment that memory must be allocated on. IMPORTANT for GTK and other stuff.
 
-#define ALIGN_TYPE		char ///unsigned char[16] /// unsigned short
+#define ALIGN_TYPE		uint32_t ///unsigned char[16] /// unsigned short
 #define ALIGN_INFO		sizeof(ALIGN_TYPE)*16	///< Alignment information is stored right before the pointer. This is the number of bytes of information stored there.
 
 
@@ -24,6 +24,8 @@
 # define FLUSH(x) ;
 # define printf(...) printk(__VA_ARGS__)
 #endif
+
+//#define CONFIG_HEAP_DEBUG 1
 
 #define PREFIX(x) x
 
@@ -43,6 +45,8 @@ static long long l_warningCount = 0;		///< Number of warnings encountered
 static long long l_errorCount = 0;			///< Number of actual errors
 static long long l_possibleOverruns = 0;	///< Number of possible overruns
 
+static int __iterator = 0;
+
 void
 heap_init()
 {
@@ -51,7 +55,15 @@ heap_init()
     spin_lock_init(&malloc_lock);
     l_pageSize = 4096;
     l_pageCount = 16;
+    __iterator = 0;
     printk("heap: initialized with %d bytes of bitmap\n", sizeof(heap_bitmap_bits));
+}
+
+size_t
+heap_proc_heapstats(int pos, void *buf, size_t len, char *__arg)
+{
+    printk("Used heap memory: %d bytes\n", l_inuse);
+    return 0;
 }
 
 /** This function is supposed to lock the memory data structures. It
@@ -165,6 +177,7 @@ struct	liballoc_minor
 	unsigned int magic;					///< A magic number to idenfity correctness.
 	unsigned int size; 					///< The size of the memory allocated. Could be 1 byte or more.
 	unsigned int req_size;				///< The size of memory requested.
+    unsigned int iterator;
 };
 
 
@@ -304,6 +317,24 @@ static struct liballoc_major *allocate_new_page( unsigned int size )
 }
 
 
+int
+__new_iterator(size_t req_size, size_t align)
+{
+    int it = __iterator ++;
+    //printk("##\tmalloc:\tsize:\t0x%x\talign:%d\tid:%d\n", req_size, align, it);
+#ifdef CONFIG_HEAP_DEBUG
+    printk("malloc,%d\n", it);
+#endif
+
+    //if (it == 998)
+        //dump_stack(8);
+
+    //if (it == 553 ||
+            //it == 656 || it ==  657)
+        //dump_stack(8);
+    return it;
+}
+
 void *PREFIX(__na_malloc)(size_t req_size, size_t align);
 void *PREFIX(na_malloc)(size_t req_size, size_t align)
 {
@@ -324,6 +355,10 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 	struct liballoc_minor *new_min;
 	unsigned long size = req_size;
 
+    //printk("%s(size:%d, align: %d)", __func__, req_size, 16);
+    //if (req_size == 96)
+        //dump_stack(8);
+
 	// For alignment, we adjust size so there's enough space to align.
 	if ( align > 1 )
 	{
@@ -337,11 +372,7 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 	if ( size == 0 )
 	{
 		l_warningCount += 1;
-		#if defined LIBALLOC_DEBUG || defined INFO
-		printf( "liballoc: WARNING: alloc( 0 ) called from %x\n",
-							__builtin_return_address(0) );
-		FLUSH();
-		#endif
+		printk("liballoc: WARNING: alloc( 0 ) called\n");
 		liballoc_unlock();
 		return PREFIX(malloc)(1);
 	}
@@ -457,6 +488,7 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 
 			
 			maj->first->magic 		= LIBALLOC_MAGIC;
+            maj->first->iterator    = __new_iterator(req_size, align);
 			maj->first->prev 		= NULL;
 			maj->first->next 		= NULL;
 			maj->first->block 		= maj;
@@ -498,6 +530,8 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 			maj->first = maj->first->prev;
 				
 			maj->first->magic 	= LIBALLOC_MAGIC;
+            maj->first->iterator = __new_iterator(req_size, align);
+            //printk("##\tmalloc:\tsize:\t0x%x\talign:%d\tid:%d\n", req_size, align, maj->first->iterator);
 			maj->first->prev 	= NULL;
 			maj->first->block 	= maj;
 			maj->first->size 	= size;
@@ -547,6 +581,8 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 						min = min->next;
 						min->next = NULL;
 						min->magic = LIBALLOC_MAGIC;
+                        min->iterator = __new_iterator(req_size, align);
+                        //printk("##\tmalloc:\tsize:\t0x%x\talign:%d\tid:%d\n", req_size, align, min->iterator);
 						min->block = maj;
 						min->size = size;
 						min->req_size = req_size;
@@ -586,6 +622,8 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 
 						new_min->magic = LIBALLOC_MAGIC;
 						new_min->next = min->next;
+                        new_min->iterator = __new_iterator(req_size, align);
+                        //printk("##\tmalloc:\tsize:\t0x%x\talign:%d\tid:%d\n", req_size, align, new_min->iterator);
 						new_min->prev = min;
 						new_min->size = size;
 						new_min->req_size = req_size;
@@ -665,7 +703,7 @@ void *PREFIX(__na_malloc)(size_t req_size, size_t align)
 void *PREFIX(malloc)(size_t req)
 {
     void *ret = na_malloc(req, DEFAULT_ALIGNMENT);
-    //printk("%s: caller 0x%x\n", __func__, __builtin_return_address(0));
+    //printk("%s(%d): caller 0x%x\n", __func__, req, __builtin_return_address(0));
     return ret;
 }
 
@@ -681,9 +719,10 @@ void *PREFIX(pa_malloc)(size_t req)
 
 void PREFIX(na_free)(size_t align, void *ptr)
 {
-    return;
 	struct liballoc_minor *min;
 	struct liballoc_major *maj;
+    void *orig_ptr = ptr;
+
 
 	if ( ptr == NULL ) 
 	{
@@ -703,6 +742,18 @@ void PREFIX(na_free)(size_t align, void *ptr)
 
 	min = (struct liballoc_minor*)((uintptr_t)ptr - sizeof( struct liballoc_minor ));
 
+    //printk("##\tfree:\tptr:\t0x%x\talign:%d\tid:%d\n", orig_ptr, align, min->iterator);
+#ifdef CONFIG_HEAP_DEBUG
+    printk("free,%d\n", min->iterator);
+    if (min->iterator == 0 || min->iterator > 3000) {
+        printk("invalid free of id %d, align 0x%x, ?ptr 0x%x\n",
+                    min->iterator, align, orig_ptr);
+        dump_stack(8);
+    }
+#endif
+
+    min->iterator = 13371337;
+
 	
 	if ( min->magic != LIBALLOC_MAGIC ) 
 	{
@@ -716,32 +767,26 @@ void PREFIX(na_free)(size_t align, void *ptr)
 		   )
 		{
 			l_possibleOverruns += 1;
-			#if defined LIBALLOC_DEBUG || defined INFO
-			printf( "liballoc: ERROR: Possible 1-3 byte overrun for magic %x != %x\n",
-								min->magic,
-								LIBALLOC_MAGIC );
-			FLUSH();
-			#endif
+			//printk( "liballoc: ERROR: Possible 1-3 byte overrun for magic %x != %x\n",
+								//min->magic,
+								//LIBALLOC_MAGIC );
 		}
 						
 						
 		if ( min->magic == LIBALLOC_DEAD )
 		{
-			#if defined LIBALLOC_DEBUG || defined INFO
-			printf( "liballoc: ERROR: multiple PREFIX(free)() attempt on %x from %x.\n", 
-									ptr,
-									__builtin_return_address(0) );
-			FLUSH();
-			#endif
+			//printk( "liballoc: ERROR: multiple PREFIX(free)() attempt on %x from %x.\n", 
+									//ptr,
+									//__builtin_return_address(0) );
 		}
 		else
 		{
-			#if defined LIBALLOC_DEBUG || defined INFO
-			printf( "liballoc: ERROR: Bad PREFIX(free)( %x ) called from %x\n",
-								ptr,
-								__builtin_return_address(0) );
-			FLUSH();
-			#endif
+			//#if defined LIBALLOC_DEBUG || defined INFO
+			//printk( "liballoc: ERROR: Bad PREFIX(free)( %x ) called from %x\n",
+								//ptr, "somewhere");
+								//__builtin_return_address(0) );
+			//FLUSH();
+			//#endif
 		}
 			
 		// being lied to...

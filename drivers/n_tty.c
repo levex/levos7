@@ -38,6 +38,7 @@ n_tty_write_output(struct tty_device *tty, uint8_t byte)
         return 1;
     }
 
+    //printk("wrte!\n");
     tty->tty_device->write(tty->tty_device, &byte, 1);
     return 1;
 }
@@ -83,7 +84,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             n_tty_write_output(tty, '\n');
         }
         send_signal_group(tty->tty_fg_proc, SIGINT);
-        return;
+        return 1;
     }
 
     if (tm->c_lflag & ISIG
@@ -94,21 +95,32 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             n_tty_write_output(tty, '\n');
         }
         send_signal_group(tty->tty_fg_proc, SIGQUIT);
-        return;
+        return 1;
     }
 
+    /* XXX: VEOF handling is not entirely correct */
     if (tm->c_lflag & ICANON
             && byte == tm->c_cc[VEOF]) {
-        if (priv->line_len == 0)
+        if (priv->line_len == 0) {
             tty->tty_state = TTY_STATE_CLOSED;
-        n_tty_flush(tty);
-        return;
+            n_tty_push(tty, '\n');
+            n_tty_flush(tty);
+            return 1;
+        }
+        byte = '\r';
+        //n_tty_flush(tty);
+        //return 1;
     }
 
     if (tm->c_lflag & ISIG
             && byte == tm->c_cc[VSUSP]) {
+        if (tm->c_lflag & ECHOCTL) {
+            n_tty_write_output(tty, '^');
+            n_tty_write_output(tty, '@' + tm->c_cc[VSUSP]);
+            n_tty_write_output(tty, '\n');
+        }
         send_signal_group(tty->tty_fg_proc, SIGTSTP);
-        return;
+        return 1;
     }
 
     /* do quick transforms */
@@ -117,7 +129,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
     }
 
     if (tm->c_iflag & IGNCR && byte == '\r')
-        return;
+        return 1;
 
     if (!(tm->c_iflag & IGNCR) && tm->c_iflag & ICRNL
             && byte == '\r')
@@ -127,7 +139,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
     if (tm->c_lflag & ICANON && tm->c_lflag & ECHOE
             && byte == tm->c_cc[VERASE]) {
         if (priv->line_len == 0)
-            return;
+            return 1;
         priv->line_len --;
         //tty->tty_device->write(tty->tty_device, "\b \b", 3);
         n_tty_output(tty, "\b \b", 3);
@@ -137,7 +149,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
     /* VWERASE ^W */
     if (byte == tm->c_cc[VWERASE]) {
         if (priv->line_len == 0)
-            return;
+            return 1;
 
         while (priv->line_len > 0) {
             //tty->tty_device->write(tty->tty_device, "\b \b", 3);
@@ -146,7 +158,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             if (priv->line_editing[priv->line_len] == ' ')
                 break;
         }
-        return;
+        return 1;
     }
 
     /* VKILL ^U */
@@ -157,7 +169,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             //tty->tty_device->write(tty->tty_device, "\b \b", 3);
             n_tty_output(tty, "\b \b", 3);
         }
-        return;
+        return 1;
     }
 
     if (tm->c_iflag & IUCLC && byte >= 'A' && byte <= 'Z')
@@ -181,6 +193,8 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
         n_tty_push(tty, '\n');
         n_tty_flush(tty);
     }
+
+    return 1;
 }
 
 static int
@@ -191,11 +205,11 @@ n_tty_read_buf(struct tty_device *tty, uint8_t *buf, size_t len)
     int rc;
 
     while (tty->tty_state != TTY_STATE_CLOSED && ring_buffer_size(&priv->line_buffer) == 0) {
-        rc = tty->tty_device->read(tty->tty_device, &preproc, 1);
-        if (rc)
-            return rc;
+        //rc = tty->tty_device->read(tty->tty_device, &preproc, 1);
+        //if (rc)
+            //return rc;
 
-        n_tty_write_input(tty, preproc);
+        //n_tty_write_input(tty, preproc);
     }
 
     return ring_buffer_read(&priv->line_buffer, buf, len);

@@ -6,10 +6,10 @@
 #include "test.h"
 
 struct uname match = {
-    .sysname = "LevOS",
+    .sysname = "Helwyr",
     .nodename = "localhost",
-    .release = "7",
-    .version = ".0",
+    .release = "seren",
+    .version = "-debug",
     .machine = "x86_32",
 };
 

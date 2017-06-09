@@ -7,6 +7,9 @@ int ext2_read_block(struct filesystem *fs, void *buf, uint32_t block)
 {
     uint32_t spb = EXT2_PRIV(fs)->sectors_per_block;
 
+    ////printk("reading block %d from sector %d\n", block, block * spb);
+    //printk("%s: %d\n", __func__, block);
+
     if (!spb)
         spb ++;
 
@@ -96,6 +99,7 @@ int ext2_alloc_block(struct filesystem *fs)
             return i * p->sb.blocks_in_blockgroup + found_block + 1;
         }
     }
+    free(block_buf);
     printk("WARNING: CRITICAL: Couldn't find a free block!\n");
     return -1;
 }

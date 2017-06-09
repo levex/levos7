@@ -14,7 +14,24 @@
 
 #define WAIT_CODE(info, code) ((int)((uint16_t)(((info) << 8 | (code)))))
 #define WAIT_EXIT(a) WAIT_CODE(a, 0)
-#define WAIT_SIG(a) WAIT_CODE(a, 1)
+#define WAIT_STOPPED(a) WAIT_CODE(a, 0x7f)
+#define WAIT_SIG(a) WAIT_CODE(1, a)
+
+#define WNOHANG 1
+#define WUNTRACED 2
+
+struct wait_ev {
+#define WAIT_EV_EXITED       1
+#define WAIT_EV_SIGNAL_DEATH 2
+#define WAIT_EV_STOPPED      3
+    int wev_what;
+    int wev_extra;
+
+    /* the process that initiated this wait event */
+    struct process *wev_proc;
+
+    struct list_elem wev_elem;
+};
 
 typedef int pid_t;
 
@@ -22,8 +39,10 @@ struct bin_state
 {
     uint32_t entry;
     void *switch_stack;
+    uintptr_t base_brk;
     uintptr_t actual_brk;
     uintptr_t logical_brk;
+    struct vm_area *brk_vma;
     char **argvp;
     char **envp;
 };
@@ -32,6 +51,8 @@ struct task;
 
 #define TASK_EXITED          1
 #define TASK_DEATH_BY_SIGNAL 2
+#define TASK_SUSPENDED       3
+#define TASK_CONTINUED       4
 
 struct process
 {
@@ -57,7 +78,12 @@ struct task
     pid_t pgid; /* process group ID */
     pid_t sid; /* session ID */
 
-#define TFLAG_WAITED   (1 << 0)
+    char *comm;
+
+#define TFLAG_WAITED             (1 << 0)
+#define TFLAG_INTERRUPTED        (1 << 1)
+#define TFLAG_PROCESSING_SYSCALL (1 << 2)
+#define TFLAG_NO_SIGNAL          (1 << 3)
     int flags;
 
 #define TASK_UNKNOWN   0   /* BUG */
@@ -71,8 +97,11 @@ struct task
 #define TASK_SLEEPING  8   /* sleeping */
     int state;
 
-#define FD_MAX 16
+#define FD_MAX 32
     struct file *file_table[FD_MAX];
+
+    /* FIXME: get rid of this and use 'struct fd' */
+    int file_table_flags[FD_MAX];
 
     int time_ran;
     int exit_code;
@@ -92,6 +121,11 @@ struct task
     spinlock_t vm_lock;
     struct list vma_list;
 
+    /* controlling terminal of this task */
+    struct tty_device *ctty;
+
+    struct work *alarm_work;
+
     /*
      * uh, not sure we need this lock, since only the
      * process will modify its children
@@ -100,6 +134,10 @@ struct task
     struct list      children_list;
     struct list_elem children_elem;
     struct task *parent;
+
+    /* list of wait_ev */
+    spinlock_t wait_ev_lock;
+    struct list wait_ev_list;
 
     struct list_elem wait_elem;
 
@@ -113,6 +151,8 @@ struct task
     uint32_t wake_time;
 
     pagedir_t mm;
+
+    char *sse_save;
 
     /* regs (if interrupted) */
     struct pt_regs *regs;

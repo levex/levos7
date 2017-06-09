@@ -60,6 +60,13 @@ kmap_map_page(uint32_t phys)
     return vaddr;
 }
 
+void
+kmap_free_page(uint32_t *phys)
+{
+    /* FIXME */
+    return;
+}
+
 void *
 kmap_get_page(void)
 {

@@ -14,6 +14,19 @@ memset (void *dst_, int value, size_t size)
 }
 
 void *
+memsetl (void *dst_, uint32_t value, size_t size) 
+{
+  uint32_t *dst = dst_;
+
+  size /= 4;
+  
+  while (size-- > 0)
+    *dst++ = value;
+
+  return dst_;
+}
+
+void *
 memcpy (void *dst_, const void *src_, size_t size) 
 {
   unsigned char *dst = dst_;

@@ -19,13 +19,13 @@ run_test()
 
     /* opening a non existing file will not consume an fd */
     CHECK_ERR(open("/non-existing", 0, 0),  ENOENT);
-    CHECK(open("/init", 0, 0), 2);
+    CHECK(open("/init", 0, 0), 3);
 
     /* closing an invalid FD should fail */
     CHECK_ERR(close(0xffffff), EBADF);
 
     /* closing a not yet open fd should fail */
-    CHECK_ERR(close(3), EBADF);
+    CHECK_ERR(close(4), EBADF);
 
     /* closing valid fds should succeed */
     CHECK(close(0), 0);

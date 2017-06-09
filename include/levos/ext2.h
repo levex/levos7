@@ -32,7 +32,9 @@ struct ext2_superblock {
     uint32_t major_version;
     uint16_t uuid;
     uint16_t gid;
-    uint8_t unused[940];
+    uint32_t s_first_ino;
+    uint32_t s_inode_size;
+    uint8_t unused[932];
 } __attribute__((packed));
 
 struct ext2_block_group_desc {
@@ -90,6 +92,7 @@ struct ext2_priv_data {
     uint32_t first_bgd;
     uint32_t number_of_bgs;
     uint32_t blocksize;
+    uint32_t inodesize;
     uint32_t sectors_per_block;
     uint32_t inodes_per_block;
 };
@@ -122,7 +125,7 @@ void dirent_free(void *);
 extern int ext2_read_inode(struct filesystem *, struct ext2_inode *, int);
 extern int ext2_write_inode(struct filesystem *, struct ext2_inode *, int);
 extern int ext2_new_inode(struct filesystem *, struct ext2_inode *);
-int ext2_inode_add_block(struct filesystem *, int, struct ext2_inode *);
+int ext2_inode_add_block(struct filesystem *, int, int, struct ext2_inode *);
 int ext2_inode_read_or_create(struct filesystem *, int, struct ext2_inode *,
         int, void *);
 //int ext2_inode_add_block(struct filesystem *, int, void *);

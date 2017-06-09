@@ -6,10 +6,16 @@ static struct pci_device pci_devices[16];
 static int num_pci_devices;
 
 extern struct pci_driver e1000_driver;
+extern struct pci_driver ide_pci_driver;
+extern struct pci_driver bga_pci_driver;
+
+#define MODULE_NAME pci
 
 static struct pci_driver *pci_drivers[] = 
 {
     &e1000_driver,
+    &ide_pci_driver,
+    &bga_pci_driver,
     NULL,
 };
 
@@ -64,6 +70,14 @@ void pci_dev_config_write(struct pci_device *pdev, uint8_t offset, uint32_t data
     pci_config_write(pdev->pci_bus, pdev->pci_slot, pdev->pci_func, offset, data);
 }
 
+uint32_t pci_dev_config_read32(struct pci_device *pdev, uint8_t offset)
+{
+    uint32_t bot = pci_dev_config_read(pdev, offset);
+    uint32_t top = pci_dev_config_read(pdev, offset + 2);
+
+    return (top << 16) | bot;
+}
+
 static inline uint16_t
 pci_get_vendor(uint16_t bus, uint16_t device, uint16_t function)
 {
@@ -116,6 +130,8 @@ pci_enable_busmaster(struct pci_device *pdev)
     uint16_t status = pci_dev_config_read(pdev, 0x06);
     cmd |= (1 << 2);
     pci_dev_config_write(pdev, 0x04, (uint32_t)status << 16 | (uint32_t) cmd);
+    mprintk("busmastering enabled for [0x%x:0x%x]\n", pdev->ident.pci_vendor,
+                pdev->ident.pci_device);
 }
 
 void
@@ -142,6 +158,10 @@ pci_enumerate(void)
                 pci_devices[num_pci_devices].pci_bus = bus;
                 pci_devices[num_pci_devices].pci_slot = slot;
                 pci_devices[num_pci_devices].pci_func = function;
+                pci_devices[num_pci_devices].pci_class =
+                    pci_get_class_id(bus, slot, function);
+                pci_devices[num_pci_devices].pci_subclass =
+                    pci_get_subclass_id(bus, slot, function);
                 pci_devices[num_pci_devices].priv   = NULL;
                 
                 num_pci_devices ++;

@@ -27,7 +27,7 @@ run_test()
     CHECK_ERR(write(5, "hello", 4), EBADF);
 
     /* using a kernel buffer should fail */
-    CHECK_ERR(write(1, (char *) 0xC001337, 51), EFAULT);
+    CHECK_ERR(write(1, (char *) 0xC0001337, 51), EFAULT);
 
     return 0;
 }

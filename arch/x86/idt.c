@@ -17,6 +17,32 @@ static intr_handler_func *intr_handlers[INTR_CNT];
 
 struct task *current_task;
 
+void
+__dump_code_at(uint8_t *ptr)
+{
+    int i;
+    uint8_t *base = ptr - 10;
+
+    printk("Code at 0x%x: \n", ptr);
+    
+    if (ptr < 4096) {
+        printk("<NULL PTR>\n");
+        return;
+    }
+
+    for (i = 0; i < 10; i ++)
+        printk("%x ", base[i]);
+
+    printk("<%x>", *ptr);
+
+    for (i = 0; i < 10; i ++)
+        printk(" %x", ptr[i + 1]);
+
+    printk("\n");
+
+    return;
+}
+
 void __noreturn
 handle_kernel_prot_fault(struct pt_regs *regs)
 {
@@ -34,6 +60,7 @@ handle_kernel_prot_fault(struct pt_regs *regs)
    printk("vector=%x err=%x\n", regs->vec_no, regs->error_code);
    if (current_task)
     printk("pid=%d\n", current_task->pid);
+   __dump_code_at(regs->eip);
    panic("General protection fault\n");
    __not_reached();
 }
@@ -41,9 +68,15 @@ handle_kernel_prot_fault(struct pt_regs *regs)
 void __noreturn
 handle_user_prot_fault(struct pt_regs *regs)
 {
-    printk("User process %d has GPF'd, sending a signal\n", current_task->pid);
+    printk("User process %d has GPF'd at 0x%x, sending a signal\n",
+            current_task->pid, regs->eip);
+
+    dump_registers(regs);
+
     send_signal(current_task, SIGSEGV);
-    while(1);
+
+    task_exit(current_task);
+    __not_reached();
 }
 
 void __noreturn
@@ -66,6 +99,17 @@ handle_unexpected_irq(struct pt_regs *regs) {
 }
 
 void
+handle_illop(struct pt_regs *regs)
+{
+    if (regs->eip > VIRT_BASE)
+        handle_unexpected_irq(regs);
+
+    printk("WARNING: pid=%d executing an Illegal instruction at 0x%x\n",
+                current_task->pid, regs->eip);
+    send_signal(current_task, SIGILL);
+}
+
+void
 intr_handler(struct pt_regs *regs)
 {
     int external = regs->vec_no >= 0x20 && regs->vec_no < 0x30;
@@ -75,12 +119,15 @@ intr_handler(struct pt_regs *regs)
     else if (regs->vec_no == 14) {
         handle_pagefault(regs);
         return;
+    } else if (regs->vec_no == 6) {
+        handle_illop(regs);
+        return;
     }
 
     intr_handler_func *handler = intr_handlers[regs->vec_no];
-    if (handler)
+    if (handler) {
         handler(regs);
-    else {
+    } else {
         handle_unexpected_irq(regs);
     }
 

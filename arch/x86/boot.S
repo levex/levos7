@@ -1,7 +1,8 @@
 # Declare constants for the multiboot header.
-.set ALIGN,    1<<0             # align loaded modules on page boundaries
-.set MEMINFO,  1<<1             # provide memory map
-.set FLAGS,    ALIGN | MEMINFO  # this is the Multiboot 'flag' field
+.set ALIGN,    1<<0                         # align loaded modules on page boundaries
+.set MEMINFO,  1<<1                         # provide memory map
+.set GFXSTUFF, 1<<2		            # want graphics
+.set FLAGS,    ALIGN | MEMINFO # this is the Multiboot 'flag' field
 .set MAGIC,    0x1BADB002       # 'magic number' lets bootloader find the header
 .set CHECKSUM, -(MAGIC + FLAGS) # checksum of above, to prove we are multiboot
 
@@ -11,6 +12,15 @@
 .long MAGIC
 .long FLAGS
 .long CHECKSUM
+.long 0 # header_addr
+.long 0 # load_addr
+.long 0 # load_end_addr
+.long 0 # bss_end_addr
+.long 0 # entry_addr
+.long 0 # mode_type
+.long 0 # width
+.long 0 # height
+.long 0 # depth
 
 # Allocate the initial stack.
 .section .bootstrap_stack, "aw", @nobits

@@ -1,11 +1,11 @@
-LEVOS_SYSROOT=/Users/kurusalevente/dev/levos7/userspace/port/sysroot
-LEVOS_INCLUDE=-I$(LEVOS_SYSROOT)/usr/i686-levos/include
-LEVOS_CRT=$(LEVOS_SYSROOT)/usr/i686-levos/lib
+#LEVOS_SYSROOT=/Users/kurusalevente/dev/levos7/userspace/port/sysroot
+#LEVOS_INCLUDE=-I$(LEVOS_SYSROOT)/usr/i686-levos/include
+#LEVOS_CRT=$(LEVOS_SYSROOT)/usr/i686-levos/lib
 
 
-CC=i686-elf-gcc
-BASE_CFLAGS=-nostdlib -ffreestanding -g $(LEVOS_INCLUDE)
-CFLAGS=$(BASE_CFLAGS) -L$(LEVOS_CRT) $(LEVOS_SYSROOT)/usr/i686-levos/lib/crt0.o
+CC=i686-levos-gcc
+#BASE_CFLAGS=-nostdlib -ffreestanding -g $(LEVOS_INCLUDE)
+#CFLAGS=$(BASE_CFLAGS) -L$(LEVOS_CRT) $(LEVOS_SYSROOT)/usr/i686-levos/lib/crt0.o
 POST_CFLAGS=-lc -lg -lm -lnosys
 
 TESTS=basic-boot \
@@ -15,9 +15,22 @@ TESTS=basic-boot \
       open-dir \
       close-robust \
       fork-robust \
-      fork-stress \
       getpid-robust \
-      uname-match
+      uname-match \
+      waitpid-simple \
+      waitpid-signal \
+      signal-handler \
+      signal-raise \
+      signal-sigchld \
+      signal-double \
+      sigprocmask-simple \
+      pipe-simple \
+      pipe-signal \
+      pipe-signal-ign \
+      pipe-seek \
+      alarm-deliver
+
+DISABLED_TESTS=fork-stress
 
 TEST_RESULTS=$(addsuffix .result,$(TESTS))
 

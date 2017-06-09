@@ -26,18 +26,18 @@ struct winsize {
     unsigned short ws_ypixel;   /* unused */
 };
 
-#define VEOF 0
-#define VEOL 1
-#define VERASE 2
-#define VINTR 3
-#define VKILL 4
-#define VMIN 5
-#define VQUIT 6
-#define VSTART 7
-#define VSTOP 8
-#define VSUSP 9
-#define VTIME 10
-#define VWERASE 11
+#define VEOF 1
+#define VEOL 2
+#define VERASE 3
+#define VINTR 4
+#define VKILL 5
+#define VMIN 6
+#define VQUIT 7
+#define VSTART 8
+#define VSTOP 9
+#define VSUSP 10
+#define VTIME 11
+#define VWERASE 12
 //#define NCCS 24
 
 #define __CONTROL(c) (((c) - 64) & 127)
@@ -196,6 +196,9 @@ struct tty_device {
 
     /* state */
     int tty_state;
+
+    /* tty id */
+    int tty_id;
 
     /* foreground process */
     pid_t tty_fg_proc;

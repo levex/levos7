@@ -2,10 +2,10 @@
 #include <levos/string.h>
 
 struct uname levos_uname = {
-    .sysname = "LevOS",
+    .sysname = "Helwyr",
     .nodename = "localhost",
-    .release = "7",
-    .version = ".0",
+    .release = "seren",
+    .version = "-debug",
     .machine = "x86_32",
 };
 

@@ -231,6 +231,9 @@ e1000_handle_receive(struct e1000_device *edev)
         void *tmpmap = kmap_map_page(p_page);
         memcpy(kbuf, (void *)((uintptr_t) tmpmap + ((uintptr_t) buf - p_page)), len);
 
+        /* FIXME: free tmpmap */
+        kmap_free_page(tmpmap);
+
         packet_push_queue(&edev->ndev.ndev_ni, kbuf, len);
 
         /* ack the packet */
@@ -298,7 +301,7 @@ e1000_net_up(struct net_device *ndev)
     struct e1000_device *edev = container_of(ndev, struct e1000_device, ndev);
     struct net_info *ni = &ndev->ndev_ni;
 
-    e1000_enable_irq(edev);
+    //e1000_enable_irq(edev);
 
     if (ndev->ndev_flags & NDEV_FLAG_DHCP) {
         net_printk("DOING DHCP\n");

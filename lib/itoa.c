@@ -7,6 +7,7 @@ void itoa(unsigned i,unsigned base,char* buf) {
     int pos = 0;
     int opos = 0;
     int top = 0;
+    memset(tbuf, 0, 32);
 
     if (i == 0 || base > 16) {
         buf[0] = '0';
@@ -23,4 +24,14 @@ void itoa(unsigned i,unsigned base,char* buf) {
     for (opos = 0; opos < top; pos --, opos ++)
         buf[opos] = tbuf[pos];
     buf[opos] = 0;
+}
+
+int atoi_10(char *str)
+{
+    int res = 0;
+  
+    for (int i = 0; str[i] != '\0'; i ++)
+        res = res * 10 + str[i] - '0';
+  
+    return res;
 }

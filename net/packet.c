@@ -52,8 +52,8 @@ packet_destroy(packet_t *pkt)
 {
     if (!pkt)
             return;
-    if (pkt->p_buf)
-        free(pkt->p_buf);
+
+    free(pkt->p_buf);
     free(pkt);
 }
 
@@ -70,6 +70,7 @@ handle_failed_transmission(struct net_info *ni, struct packet_retransmission_des
 {
     net_printk("%s: failed to retransmit a packet, no tries left\n", __func__);
     desc->notify_retransmit_failed(ni, desc->pkt);
+    free(desc);
 }
 
 void
@@ -187,7 +188,11 @@ drop:
     net_printk("^ dropped\n");
     goto free;
 free:
-    free(pkt);
+    //printk("BEFORE:\n");
+    //heap_proc_heapstats(0, 0, NULL, 0);
+    packet_destroy(pkt);
+    //printk("AFTER:\n");
+    //heap_proc_heapstats(0, 0, NULL, 0);
 }
 
 void

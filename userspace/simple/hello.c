@@ -96,7 +96,7 @@ main(int argc, char **argvp)
         printf("fd is %d, errno is %d\n", fd, errno);
         if (fd > 0) {
             do {
-                rc = readdir(fd, (struct dirent *) dir_buffer, 0);
+                rc = _levos_readdir(fd, (struct dirent *) dir_buffer, 0);
                 if (rc != -1) {
                     struct dirent *dir = (struct dirent *) dir_buffer;
                     printf("entry: %s\n", dir->d_name);

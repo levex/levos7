@@ -16,10 +16,26 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
 
 #define PATH_MAX 4096
 
+#define TIOCSPGRP 0x5410
+
 static char *cwd_buffer;
+
+/*int
+setpgid(pid_t a, pid_t b)
+{
+    int rc;
+    asm volatile("int $0x80":"=a"(rc):"a"(0x39),"b"(a),"c"(b));
+    if (rc < 0) {
+        errno = (-1) * rc;
+        return -1;
+    }
+
+    return 0;
+}*/
 
 /*
   Function Declarations for builtin shell commands:
@@ -121,11 +137,12 @@ int lsh_exit(char **args)
  */
 int lsh_launch(char **args)
 {
-  pid_t pid;
+  pid_t pid, me = getpid();
   int status;
 
   pid = fork();
   if (pid == 0) {
+      setpgid(getpid(), getpid());
     // Child process
     if (execvp(args[0], args) == -1) {
       perror("lsh");
@@ -135,10 +152,13 @@ int lsh_launch(char **args)
     // Error forking
     perror("lsh");
   } else {
+    setpgid(pid, pid);
+    ioctl(0, TIOCSPGRP, &pid);
     // Parent process
     do {
       waitpid(pid, &status, WUNTRACED);
     } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    ioctl(0, TIOCSPGRP, &me);
   }
 
   return 1;
@@ -224,6 +244,7 @@ char **lsh_split_line(char *line)
   int bufsize = LSH_TOK_BUFSIZE, position = 0;
   char **tokens = malloc(bufsize * sizeof(char*));
   char *token, **tokens_backup;
+  int state = 0;
 
   if (!tokens) {
     fprintf(stderr, "lsh: allocation error\n");
@@ -234,6 +255,10 @@ char **lsh_split_line(char *line)
   while (token != NULL) {
     tokens[position] = token;
     position++;
+    if (token[0] == '\"' && !state)
+        state = 1;
+    else if (token[strlen(token)] == '\"' && state)
+        state = 0;
 
     if (position >= bufsize) {
       bufsize += LSH_TOK_BUFSIZE;
@@ -263,9 +288,15 @@ void lsh_loop(void)
 
   do {
     printf("%s@levOS:%s $ ", "root", cwd_buffer);
+    fflush(stdout);
     line = lsh_read_line();
     args = lsh_split_line(line);
+
+    //for (int i = 0; args[i]; i ++)
+        //printf("arg %d: %s\n", i, args[i]);
+
     status = lsh_execute(args);
+    //status = 1;
 
     free(line);
     free(args);
@@ -294,4 +325,3 @@ int main(int argc, char **argv)
 
   return EXIT_SUCCESS;
 }
-

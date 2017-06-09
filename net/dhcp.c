@@ -92,6 +92,7 @@ dhcp_create_discover_packet(struct net_info *ni)
     optoff += dhcp_write_option(dhcp, optoff, 255, 0, 0);
 
     udp_set_payload(pkt, dhcp, sizeof(*dhcp) + optoff);
+
     free(dhcp);
 
     return pkt;

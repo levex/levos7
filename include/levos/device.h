@@ -12,6 +12,10 @@ struct device
 #define DEV_TYPE_CHAR    2
     int type;
 
+#define DEV_TYPE_BLOCK_UNKNOWN 0
+#define DEV_TYPE_BLOCK_ATA     1
+    int subtype;
+
     size_t (*read)(struct device *, void *, size_t);
     size_t (*write)(struct device *, void *, size_t);
 

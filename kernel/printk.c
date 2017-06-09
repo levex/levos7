@@ -40,6 +40,16 @@ void vprintk(char *fmt, va_list ap)
                     i++;
                     break;
                 }
+                case 'X': {
+                    int c = va_arg(ap, int);
+                    char str[32] = {0};
+                    itoa(c, 16, str);
+                    if (strlen(str) < 2)
+                        console_emit('0');
+                    console_puts(str);
+                    i++;
+                    break;
+                }
                 case 'p': {
                     int c = fmt[i + 2];
                     switch (c) {

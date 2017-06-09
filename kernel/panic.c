@@ -1,6 +1,7 @@
 #include <levos/kernel.h>
 #include <levos/intr.h>
 #include <levos/packet.h>
+#include <levos/task.h>
 #include <stdarg.h>
 
 extern void vprintk(char *, va_list);
@@ -10,6 +11,14 @@ extern void *_text_start;
 
 extern uint32_t *__kernel_map_start;
 extern uint32_t *__kernel_map_end;
+
+static int __in_panic = 0;
+
+int
+in_panic(void)
+{
+    return __in_panic;
+}
 
 void
 print_function_place(uint32_t addr)
@@ -21,12 +30,16 @@ print_function_place(uint32_t addr)
         // printk("0x%x\n", cmp + 4);
         if (cmp <= addr && addr <= cmp2) {
             char *target = ptr + 4;
+            char c;
+            c = target[strlen(target) - 1];
             target[strlen(target) - 1] = 0;
             printk("  <0x%x> %s+0x%x/0x%x\n", addr, target, addr - cmp, cmp2 - cmp);
+            target[strlen(target)] = c;
+            return;
         }
     }
 
-    return "unknown";
+    printk("unknown\n");
     
 }
 
@@ -61,6 +74,7 @@ dump_stack(int maxframes)
             break;
         ebp = (unsigned int *)(ebp[0]);
         unsigned int *arguments = &ebp[2];
+
         print_function_place(eip);
     }
 }
@@ -72,10 +86,20 @@ panic(char *fmt, ...)
     va_start(ap, fmt);
 
     DISABLE_IRQ();
+    __in_panic = 1;
     printk("*** Kernel panic: ");
     vprintk(fmt, ap);
 
     dump_stack(16);
+    extern struct task *current_task;
+    dump_registers(current_task->regs);
+    __dump_code_at(current_task->regs->eip);
+    /* dump user stack */
+    printk("User stack: \n");
+    __hex_dump((int)current_task->regs->esp,
+                (int)current_task->regs->esp,
+                VIRT_BASE - (unsigned int)current_task->regs->esp,
+                0);
 
     va_end(ap);
 

@@ -2,8 +2,13 @@
 #include <levos/console.h>
 #include <levos/fs.h>
 #include <levos/x86.h>
+#include <levos/tty.h>
 
 #define SERIAL_PORT 0x3F8
+
+#define MODULE_NAME serial
+
+static struct tty_device *tty_notify;
 
 static void serial_out(int o, char d)
 {
@@ -71,6 +76,21 @@ int serial_file_fstat(struct file *f, struct stat *st)
     return 0;
 }
 
+int
+serial_file_close(struct file *f)
+{
+    free(f->full_path);
+    free(f);
+}
+
+void
+serial_irq(struct pt_regs *regs)
+{
+    //mprintk("IRQ\n");
+    if (tty_notify)
+        tty_notify->tty_ldisc->write_input(tty_notify, serial_read_data());
+}
+
 struct console serial_console = {
     .putc = serial_out_data,
     .readc = serial_read_data,
@@ -80,6 +100,7 @@ struct file_operations serial_fops = {
     .read = serial_file_read,
     .write = serial_file_write,
     .fstat = serial_file_fstat,
+    .close = serial_file_close,
 };
 
 struct file serial_base_file = {
@@ -87,10 +108,28 @@ struct file serial_base_file = {
     .fs = NULL,
     .fpos = 0,
     .isdir = 0,
-    .respath = NULL,
+    .respath = "ttyS0",
+    .full_path = "/dev/ttyS0",
 };
 
+void
+serial_signup(struct tty_device *tty)
+{
+    tty_notify = tty;
+}
+
 int serial_init() {
+    tty_notify = NULL;
+    //outportb(SERIAL_PORT + 1, 0x00);    // Disable all interrupts
+    //outportb(SERIAL_PORT + 3, 0x80);    // Enable DLAB (set baud rate divisor)
+    //outportb(SERIAL_PORT + 0, 0x03);    // Set divisor to 3 (lo byte) 38400 baud
+    //outportb(SERIAL_PORT + 1, 0x00);    //                  (hi byte)
+    //outportb(SERIAL_PORT + 3, 0x03);    // 8 bits, no parity, one stop bit
+    //outportb(SERIAL_PORT + 2, 0xC7);    // Enable FIFO, clear them, with 14-byte threshold
+    //outportb(SERIAL_PORT + 4, 0x0B);    // IRQs enabled, RTS/DSR set
+    outportb(SERIAL_PORT + 1, 0x01);
+    intr_register_hw(0x20 + 0x04, serial_irq);
+    mprintk("setup done\n");
     return 0;
 }
 

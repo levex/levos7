@@ -80,8 +80,10 @@ work_cancel(struct work *work)
         work->work_flags |= WORK_FLAG_CANCELLED;
     } else if (work->work_flags & WORK_FLAG_QUEUED == 0) {
         return -1;
-    } else
+    } else {
         list_remove(&work->elem);
+        work_destroy(work);
+    }
 
     spin_unlock(&work_lock);
 

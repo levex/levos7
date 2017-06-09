@@ -6,6 +6,8 @@
 
 static char dir_buffer[512];
 
+extern int _levos_readdir(int, struct dirent *, int);
+
 int
 main(int argc, char *argvp[])
 {
@@ -24,7 +26,7 @@ main(int argc, char *argvp[])
     //printf("fd is %d, errno is %d\n", fd, errno);
     if (fd > 0) {
         do {
-            rc = readdir(fd, (struct dirent *) dir_buffer, 0);
+            rc = _levos_readdir(fd, (struct dirent *) dir_buffer, 0);
             if (rc != -1) {
                 struct dirent *dir = (struct dirent *) dir_buffer;
                 printf("%s\n", dir->d_name);

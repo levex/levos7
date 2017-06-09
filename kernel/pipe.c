@@ -2,26 +2,46 @@
 #include <levos/pipe.h>
 #include <levos/fs.h>
 #include <levos/task.h>
+#include <levos/spinlock.h>
 
 size_t
 do_pipe_read(struct pipe *pip, void *buf, size_t len)
 {
-    while (ring_buffer_size(&pip->pipe_buffer) == 0 || pip->pipe_flags & PIPFLAG_WRITE_CLOSED)
+    size_t rc;
+
+    while (ring_buffer_size(&pip->pipe_buffer) == 0 &&
+            !(pip->pipe_flags & PIPFLAG_WRITE_CLOSED))
         ;
 
-    if (pip->pipe_flags & PIPFLAG_WRITE_CLOSED)
+    if (ring_buffer_size(&pip->pipe_buffer) == 0 && 
+            pip->pipe_flags & PIPFLAG_WRITE_CLOSED)
         return 0;
 
-    return ring_buffer_read(&pip->pipe_buffer, buf, len);
+    spin_lock(&pip->pipe_lock);
+    rc = ring_buffer_read(&pip->pipe_buffer, buf, len);
+    spin_unlock(&pip->pipe_lock);
+    return rc;
 }
 
 size_t
 do_pipe_write(struct pipe *pip, void *buf, size_t len)
 {
-    if (pip->pipe_flags & PIPFLAG_READ_CLOSED)
-        send_signal(current_task, SIGPIPE);
+    size_t rc;
+
+    if (pip->pipe_flags & PIPFLAG_READ_CLOSED) {
+        if (signal_get_disp(current_task, SIGPIPE) == SIG_IGN)
+            return -EPIPE;
+        else
+            send_signal(current_task, SIGPIPE);
+
+        return -EINTR;
+    }
     
-    return ring_buffer_write(&pip->pipe_buffer, buf, len);
+    spin_lock(&pip->pipe_lock);
+    rc = ring_buffer_write(&pip->pipe_buffer, buf, len);
+    spin_unlock(&pip->pipe_lock);
+
+    return rc;
 }
 
 size_t
@@ -49,10 +69,10 @@ pipe_write(struct file *filp, void *buf, size_t len)
 int
 pipe_fstat(struct file *filp, struct stat *st)
 {
-    struct pipe *pip = filp->priv;
+   struct pipe *pip = filp->priv;
 
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFCHR;
+    st->st_mode = S_IFIFO;
 
     return 0;
 }
@@ -102,12 +122,15 @@ pipe_create_file(struct pipe *pip)
         return NULL;
 
     filp->fops = &pipe_fops;
+    filp->full_path = strdup("/internal/pipe");
+    filp->respath = strdup("pipe");
+    filp->length = 0;
     filp->fs = NULL;
     filp->fpos = 0;
     filp->isdir = 0;
     filp->type = FILE_TYPE_PIPE;
     filp->refc = 1;
-    filp->respath = NULL;
+    //filp->respath = NULL;
     filp->priv = pip;
     return filp;
 }
@@ -124,6 +147,7 @@ pipe_create(void)
     /* XXX: this may need checking later on */
     ring_buffer_init(&pip->pipe_buffer, PIPE_BUF);
     ring_buffer_set_flags(&pip->pipe_buffer, RB_FLAG_NONBLOCK);
+    spin_lock_init(&pip->pipe_lock);
 
     pip->pipe_read = pipe_create_file(pip);
     if (pip->pipe_read == NULL) {

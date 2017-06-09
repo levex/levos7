@@ -5,6 +5,16 @@
 
 extern struct tty_line_discipline *n_tty_ldisc;
 
+static int __last_tty_id;
+
+#define MODULE_NAME tty
+
+static
+int tty_get_id()
+{
+    return __last_tty_id ++;
+}
+
 void
 termios_init(struct termios *tm)
 {
@@ -16,13 +26,13 @@ termios_init(struct termios *tm)
     tm->c_cc[VEOF] = __CONTROL('D');
     tm->c_cc[VEOL] = __CONTROL('?');
     tm->c_cc[VERASE] = 0x7F;
-    tm->c_cc[VINTR] = __CONTROL('C');
+    tm->c_cc[VINTR] = __CONTROL('X'); /* XXX: should be ^C */
     tm->c_cc[VKILL] = __CONTROL('U');
     tm->c_cc[VMIN] = 1;
     tm->c_cc[VQUIT] = __CONTROL('\\');
     tm->c_cc[VSTART] = __CONTROL('Q');
     tm->c_cc[VSTOP] = __CONTROL('S');
-    tm->c_cc[VSUSP] = __CONTROL('Z');
+    tm->c_cc[VSUSP] = __CONTROL('K'); /* XXX: should be ^Z */
     tm->c_cc[VTIME] = 0;
     tm->c_cc[VWERASE] = __CONTROL('W');
 }
@@ -36,12 +46,17 @@ tty_new(struct device *dev)
     if (!tty)
         return ERR_PTR(-ENOMEM);
 
+    mprintk("creating new TTY device with base %s\n", dev->name);
+
     tty->tty_device = dev;
     tty->tty_state = TTY_STATE_UNKNOWN;
     tty->tty_ldisc = &n_tty_ldisc;
+    tty->tty_id = tty_get_id();
     termios_init(&tty->tty_termios);
     tty->tty_winsize.ws_row = 80;
     tty->tty_winsize.ws_col = 25;
+    tty->tty_winsize.ws_xpixel = 0;
+    tty->tty_winsize.ws_ypixel = 0;
     rc = tty->tty_ldisc->init(tty->tty_ldisc);
     if (rc) {
         free(tty);
@@ -55,10 +70,12 @@ size_t tty_fread(struct file *f, void *buf, size_t len)
 {
     struct tty_device *tty = f->priv;
 
-    if (tty->tty_state == TTY_STATE_CLOSED)
+    if (tty->tty_state == TTY_STATE_CLOSED) {
+        tty->tty_state = TTY_STATE_UNKNOWN;
         return 0;
+    }
 
-    tty->tty_ldisc->read_buf(tty, buf, len);
+    return tty->tty_ldisc->read_buf(tty, buf, len);
 }
 
 size_t tty_fwrite(struct file *f, void *_buf, size_t len)
@@ -82,7 +99,7 @@ int tty_ffstat(struct file *f, struct stat *st)
 
 int tty_fclose(struct file *f)
 {
-    return 0;
+    //free(f);
 }
 
 int tty_freaddir(struct file *f, struct linux_dirent *de)
@@ -90,15 +107,18 @@ int tty_freaddir(struct file *f, struct linux_dirent *de)
     return 0;
 }
 
-int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
+int tty_ioctl(struct tty_device *tty, unsigned long req, unsigned long arg)
 {
-    struct tty_device *tty = f->priv;
+    //mprintk("ioctl 0x%x with arg 0x%x\n", req, arg);
+    /* TODO: verify the buffers before memcpying into */
 
     if (req == TCGETS) {
+        //mprintk("TCGETS\n");
         struct termios *tm = (void *) arg;
         memcpy(tm, &tty->tty_termios, sizeof(*tm));
         return 0;
     } else if (req == TCSETS) {
+        //mprintk("TCSETS\n");
         struct termios *tm = (void *) arg;
         memcpy(&tty->tty_termios, tm, sizeof(*tm));
         return 0;
@@ -124,9 +144,17 @@ int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
         return 0;
     } else if (req == TIOCSPGRP) {
         pid_t *tg = arg;
+        //printk("tty: fg pgid %d\n", *tg);
         tty->tty_fg_proc = *tg;
         return 0;
     }
+}
+
+int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
+{
+    struct tty_device *tty = f->priv;
+
+    return tty_ioctl(tty, req, arg);
 }
 
 struct file_operations tty_fops = {
@@ -146,12 +174,13 @@ tty_get_file(struct tty *tty)
         return NULL;
 
     filp->fops = &tty_fops,
-    filp->fs= NULL;
+    filp->fs = NULL;
     filp->fpos = 0;
     filp->isdir = 0;
     filp->type = FILE_TYPE_TTY;
     filp->refc = 1;
-    filp->respath = NULL;
+    filp->respath = "console";
+    filp->full_path = strdup("/dev/console");
     filp->priv = tty;
 
     return filp;
@@ -169,3 +198,73 @@ tty_init(void)
 	printk("tty: initializing layer\n");
     return 0;
 }
+
+int ctty_file_write(struct file *f, char *_buf, size_t count)
+{
+    struct tty_device *tty = current_task->ctty;
+
+    if (tty) {
+        for (int i = 0; i < count; i ++)
+            tty->tty_ldisc->write_output(tty, _buf[i]);
+        return count;
+    }
+
+    return -ENOTTY;
+}
+
+int ctty_file_read(struct file *f, void *_buf, size_t count)
+{
+    struct tty_device *tty = current_task->ctty;
+
+    if (tty)
+        return tty->tty_ldisc->read_buf(tty, _buf, count);
+
+    return -ENOTTY;
+}
+
+int ctty_file_fstat(struct file *f, struct stat *st)
+{
+    st->st_mode = S_IFCHR;
+    return 0;
+}
+
+int ctty_file_ioctl(struct file *f, unsigned long req, unsigned long arg)
+{
+    struct tty_device *tty = current_task->ctty;
+
+    if (tty)
+        return tty_ioctl(tty, req, arg);
+
+    return -ENOTTY;
+}
+
+int
+ctty_file_truncate(struct file *f, int pos)
+{
+    return 0;
+}
+
+int
+ctty_file_close(struct file *f)
+{
+    free(f->full_path);
+    free(f);
+}
+
+struct file_operations ctty_fops = {
+    .read = ctty_file_read,
+    .write = ctty_file_write,
+    .fstat = ctty_file_fstat,
+    .close = ctty_file_close,
+    .ioctl = ctty_file_ioctl,
+    .truncate = ctty_file_truncate,
+};
+
+struct file ctty_base_file = {
+    .fops = &ctty_fops,
+    .fs = NULL,
+    .fpos = 0,
+    .isdir = 0,
+    .respath = "tty",
+    .full_path = "/dev/tty",
+};

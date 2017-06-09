@@ -4,10 +4,11 @@
 #include <levos/types.h>
 #include <levos/task.h>
 #include <levos/list.h>
+#include <levos/spinlock.h>
 
 struct task;
 
-#define MIN_SIG      1
+#define MIN_SIG      0
 
 #define SIGHUP       1   	/* Hangup (POSIX) */
 #define SIGINT       2       /* Terminal interrupt (ANSI) */
@@ -24,7 +25,7 @@ struct task;
 #define SIGPIPE     13  	/* Write on a pipe with no reader, Broken pipe (POSIX) */
 #define SIGALRM     14  	/* Alarm clock (POSIX) */
 #define SIGTERM     15  	/* Termination (ANSI) */
-#define SIGSTKFLT   16  /* Stack fault */
+#define SIGABRT     16      /* Abort */
 #define SIGCHLD     17	    /* Child process has stopped or exited, changed (POSIX) */
 #define SIGCONT     18	    /* Continue executing, if stopped (POSIX) */
 #define SIGSTOP     19	    /* Stop executing(can't be caught or ignored) (POSIX) */
@@ -40,13 +41,18 @@ struct task;
 #define SIGIO       29      /* I/O now possible (4.2 BSD) */
 #define SIGPWR      30      /* Power failure restart (System V) */
 
-#define MAX_SIG     30
+#define MAX_SIG     31
 
+
+#define SIG_BLOCK   1
+#define SIG_UNBLOCK 2
+#define SIG_SETMASK 0
+
+
+typedef void (*sighandler_t)(int);
 
 #define SIG_DFL ((sighandler_t) 0)
 #define SIG_IGN ((sighandler_t) 1)
-
-typedef void (*sighandler_t)(int);
 
 struct signal {
     int id;
@@ -68,7 +74,15 @@ struct signal_struct {
 #define SIG_STATE_HANDLING  1
     int sig_state;
 
+#define SFLAG_RESCHED (1 << 0) /* the sigmask was modified */
+    int sig_flags;
+
     struct signal *current_signal;
+
+    spinlock_t sig_lock;
+
+    /* if 1, the signal is blocked */
+    uint64_t sig_mask;
 
     sighandler_t signal_handlers[MAX_SIG];
 };
@@ -92,7 +106,7 @@ inline char *signal_to_string(int sig)
         case SIGPIPE:return "SIGPIPE";
         case SIGALRM:return "SIGALRM";
         case SIGTERM:return "SIGTERM";
-        case SIGSTKFLT:return "SIGSTKFLT";
+        case SIGABRT:return "SIGABRT";
         case SIGCHLD:return "SIGCHLD";
         case SIGCONT:return "SIGCONT";
         case SIGSTOP:return "SIGSTOP";
@@ -121,5 +135,6 @@ void send_signal_session_of(struct task *, int);
 void ret_from_signal(void);
 int task_has_pending_signals(struct task *);
 void signal_handle(struct task *);
+int signal_processing(struct task *);
 
 #endif /* __LEVOS_SIGNAL_H */

@@ -199,8 +199,8 @@ bitmap_count(const struct bitmap *b, size_t start, size_t cnt, bool value)
 
 	value_cnt = 0;
 	for(i = 0; i < cnt; i++)
-	if(bitmap_test(b, start + i) == value)
-		value_cnt++;
+        if(bitmap_test(b, start + i) == value)
+            value_cnt++;
 	return value_cnt;
 }
 

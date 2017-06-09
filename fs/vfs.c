@@ -3,6 +3,7 @@
 #include <levos/ext2.h>
 #include <levos/string.h>
 #include <levos/list.h>
+#include <levos/task.h>
 
 #define MAX_MOUNTS 256
 
@@ -74,6 +75,7 @@ struct mount *find_mount(char *path)
         goto out;
 
     while (strlen(str) > 1) {
+        //printk("Checking str %s\n", str);
         ret = __check_mounts(str);
         if (ret)
             goto out;
@@ -120,6 +122,14 @@ int vfs_mount(char *path, struct device *dev)
     if (!root_mount && strcmp("/", path) != 0)
         return -EAGAIN;
 
+    /* 
+     * if there is a root mount then the path must exist and
+     * be empty
+     */
+    if (root_mount) {
+        /* FIXME */
+    }
+
     struct filesystem *fs = vfs_mount_fs(dev);
     if (!fs)
         return -ENXIO;
@@ -158,22 +168,58 @@ int register_fs(struct fs_ops *fs)
  */
 struct file *vfs_open(char *path)
 {
+    /* HACK XXX */
+    //if (strcmp(path, "/dev/urandom") == 0)
+        //return dup_file(&urandom_base_file);
+    //else if (strcmp(path, "/dev/null") == 0)
+        //return dup_file(&null_base_file);
+
     struct mount *m = find_mount(path);
 
-    char *exppath = path + strlen(m->point) - 1;
+    char *exppath;
+    if (strlen(path) == strlen(m->point)) {
+        exppath = "/";
+    } else {
+        exppath = path + strlen(m->point);
+    }
+
+    //printk("exppath is %s\n", exppath);
 
     //printk("experimental path would be for \"%s\": \"%s\"\n",
             //path, exppath);
 
     /* FIXME: the path is wrong if multiple mounts exist */
-    return m->fs->fs_ops->open(m->fs, exppath);
+   struct file *f = m->fs->fs_ops->open(m->fs, exppath);
+   if (f && !IS_ERR(f)) {
+       f->refc = 1;
+       f->full_path = strdup(path);
+   }
+
+   return f;
 }
 
 void
 vfs_close(struct file *f)
 {
-    if (f->fops->close)
+
+    //printk("CLOSING %s refc %d\n", f->respath, f->refc);
+
+    f->refc --;
+
+    if (f->refc == 0) {
+        free(f->full_path);
         f->fops->close(f);
+    }
+
+    //dump_stack(8);
+}
+
+void
+vfs_inc_refc(struct file *f)
+{
+    //printk("file %s increased refc from %d\n", f->respath, f->refc);
+    f->refc ++;
+    //dump_stack(8);
 }
 
 struct file *
@@ -191,6 +237,15 @@ vfs_create(char *path)
     return ERR_PTR(-EROFS);
 }
 
+int
+vfs_truncate(struct file *f)
+{
+    if (f->fops->truncate)
+        return f->fops->truncate(f, 0);
+
+    return -EROFS;
+}
+
 struct file *
 dup_file(struct file *f)
 {
@@ -206,7 +261,16 @@ dup_file(struct file *f)
     ret->fpos = 0;
     /* same statistics and other stuff */
     ret->isdir = f->isdir;
-    ret->respath = strdup(f->respath);
+    if (f->respath)
+        ret->respath = strdup(f->respath);
+    ret->type = f->type;
+    ret->length = f->length;
+    ret->refc = 1;
+    if (f->full_path)
+        ret->full_path = strdup(f->full_path);
+
+    /* XXX: GIANT HACK */
+    ret->priv = ext2_dup_priv(f->priv);
 
     /* done */
     return ret;
@@ -226,7 +290,33 @@ int vfs_stat(char *p, struct stat *buf)
 
     if (!m->fs->fs_ops->stat)
         return -ENOSYS;
-    return m->fs->fs_ops->stat(m->fs, p, buf);
+
+    char *exppath;
+    if (strlen(p) == strlen(m->point)) {
+        exppath = "/";
+    } else {
+        exppath = p + strlen(m->point);
+    }
+
+    return m->fs->fs_ops->stat(m->fs, exppath, buf);
+}
+
+/*
+ * vfs_mkdir  - backend for FS-related mkdir(2)
+ */
+int vfs_mkdir(char *p, int mode)
+{
+    struct mount *m = find_mount(p);
+    if (!m)
+        panic("Location %s was not mounted!\n", p);
+
+    if (!m->fs)
+        panic("Mount deciphered for %s had not fs\n", p);
+
+    if (!m->fs->fs_ops->mkdir)
+        return -ENOSYS;
+
+    return m->fs->fs_ops->mkdir(m->fs, p, mode);
 }
 
 /*
@@ -239,6 +329,7 @@ int vfs_init(void)
 
     ext2_init();
     procfs_init();
+    devfs_init();
 
     return 0;
 }
@@ -394,8 +485,23 @@ canonicalize_path(char *cwd, char *ap)
         return ERR_PTR(rc);
 
     if (!(st.st_mode & S_IFDIR))
-        return -ENOTDIR;
+        return ERR_PTR(-ENOTDIR);
 
 	/* And return a working, absolute path */
 	return output;
+}
+
+void
+task_do_cloexec(struct task *task)
+{
+    int i;
+
+    for (i = 0; i < FD_MAX; i ++) {
+        struct file *f = task->file_table[i];
+        if (f && f->mode & O_CLOEXEC || task->file_table_flags[i] & FD_CLOEXEC) {
+            vfs_close(f);
+            task->file_table[i] = NULL;
+            task->file_table_flags[i] = 0;
+        }
+    }
 }

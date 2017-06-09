@@ -12,7 +12,7 @@
 #define VIRT_BASE 0xC0000000
 
 extern void *_kernel_end, *_kernel_start;
-#define KERNEL_LENGTH (&_kernel_end - &_kernel_start)
+#define KERNEL_LENGTH ((unsigned long) &_kernel_end - (unsigned long) &_kernel_start)
 #define KERNEL_PHYS_END (KERNEL_PHYS_BASE + KERNEL_LENGTH)
 
 #include <levos/compiler.h>
@@ -20,6 +20,7 @@ extern void *_kernel_end, *_kernel_start;
 #include <levos/types.h>
 #include <levos/heap.h>
 #include <levos/errno.h>
+#include <levos/module.h>
 #include <levos/limits.h>
 
 #define ROUND_DOWN(x, s) ((x) & ~((s)-1))

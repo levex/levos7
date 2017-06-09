@@ -27,6 +27,7 @@ struct linux_dirent {
 struct file_operations {
     size_t (*read)(struct file *, void *, size_t);
     size_t (*write)(struct file *, void *, size_t);
+    int (*truncate)(struct file *, int);
     int (*fstat)(struct file *, struct stat *);
     int (*close)(struct file *);
     int (*readdir)(struct file *, struct linux_dirent *);
@@ -41,19 +42,37 @@ struct file_operations {
 #define O_TRUNC   0x0400
 #define O_EXCL    0x0800
 #define O_SYNC    0x2000
+#define O_CLOEXEC 0x40000
+#define O_NOCTTY  0x8000
+
+#define FD_CLOEXEC 1
+
+#define F_DUPFD 0
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
 
 #define FILE_TYPE_NORMAL 0
 #define FILE_TYPE_SOCKET 1
 #define FILE_TYPE_TTY    2
 #define FILE_TYPE_PIPE   3
 
+struct fd {
+    int          fd_flags;
+    struct file *fd_file;
+};
+
 struct file {
     struct file_operations *fops;
     struct filesystem *fs;
     int fpos;
+    int mode;
     int isdir;
+    int length;
     int type;
     int refc;
+    char *full_path;
     char *respath;
     void *priv;
 };
@@ -75,6 +94,7 @@ struct fs_ops {
     struct file *(*open)(struct filesystem *, char *);
     int (*stat)(struct filesystem *, char *, struct stat *);
     struct file *(*create)(struct filesystem *, char *);
+    int (*mkdir)(struct filesystem *, char *, int);
     struct filesystem *(*mount)(struct device *);
 };
 
@@ -91,6 +111,7 @@ struct filesystem {
 
 #define S_IFCHR  0020000
 #define S_IFDIR  0040000
+#define S_IFIFO  0010000
 
 void file_seek(struct file *, int);
 int vfs_init(void);

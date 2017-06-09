@@ -58,3 +58,5 @@ struct device console_device = {
     .name = "ttyconsole",
     .priv = NULL,
 };
+
+struct device *default_user_device = &console_device;

@@ -15,6 +15,57 @@
 int __x86_total_ram;
 
 void
+enable_sse(void)
+{
+    //asm volatile ("fninit");
+    asm volatile ("clts");
+	size_t t;
+	asm volatile ("mov %%cr0, %0" : "=r"(t));
+	t &= ~(1 << 2);
+	t |= (1 << 1);
+	asm volatile ("mov %0, %%cr0" :: "r"(t));
+
+	asm volatile ("mov %%cr4, %0" : "=r"(t));
+	t |= 3 << 9;
+	asm volatile ("mov %0, %%cr4" :: "r"(t));
+
+    /*asm volatile("movl %cr0, %eax;"
+                 "andw $0xfffb, %ax;"
+                 "orw $0x2, %ax;"
+                 "movl %eax, %cr0;"
+                 "movl %cr4, %eax;"
+                 "orw $(3 << 9), %ax;"
+                 "movl %eax, %cr4;"
+            );*/
+    /*
+        mov eax, cr0
+    and ax, 0xFFFB		;clear coprocessor emulation CR0.EM
+    or ax, 0x2			;set coprocessor monitoring  CR0.MP
+    mov cr0, eax
+    mov eax, cr4
+    or ax, 3 << 9		;set CR4.OSFXSR and CR4.OSXMMEXCPT at the same time
+    mov cr4, eax
+    ret
+    */
+}
+
+static uint8_t saves[512] __attribute__((aligned(16)));
+
+void
+do_sse_save(struct task *task)
+{
+    asm volatile ("fxsave (%0)" :: "r"(saves));
+	memcpy(task->sse_save, &saves, 512);
+}
+
+void
+do_sse_restore(struct task *task)
+{
+	memcpy(&saves, task->sse_save, 512);
+    asm volatile ("fxrstor (%0)" :: "r"(saves));
+}
+
+void
 arch_early_init(uint32_t boot_sig, void *ptr)
 {
     tss_init();
@@ -22,6 +73,8 @@ arch_early_init(uint32_t boot_sig, void *ptr)
     gdt_init();
 
     idt_init();
+
+    enable_sse();
 
     *(uint16_t *)(0xC03FF000) = 0x1643;
 
@@ -96,6 +149,16 @@ arch_late_init(void)
     asm volatile("movl $"__stringify(LEVOS_MAGIC)", %%eax; int $0x60":::"eax");
 
     intr_register_user(0x80, __prepare_system_call);
+
+    serial_init();
+}
+
+void
+arch_very_late_init(void)
+{
+    ps2_keyboard_init();
+
+    bga_init();
 }
 
 extern struct console serial_console;

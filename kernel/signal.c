@@ -15,6 +15,12 @@ task_has_pending_signals(struct task *task)
 }
 
 int
+signal_processing(struct task *task)
+{
+    return task->signal.sig_state != SIG_STATE_NULL;
+}
+
+int
 signal_is_signum_valid(int signum)
 {
     return MIN_SIG <= signum && signum <= MAX_SIG;
@@ -27,6 +33,9 @@ do_fatal_signal(struct task *task, int signal)
 
     task->owner->status = TASK_DEATH_BY_SIGNAL;
     task->owner->exit_code = signal;
+
+    free(task->signal.current_signal);
+    task->signal.current_signal = NULL;
 
     task_exit(task);
     if (task == current_task)
@@ -47,10 +56,39 @@ __send_signal(struct task *task, int signal)
     memset(sig, 0, sizeof(*sig));
     sig->id = signal;
     /* XXX: later, we will push data here */
-    sig->data = task->sys_regs;
+    //sig->data = task->sys_regs;
     //printk("%s 0x%x\n", __func__, sig->data);
     //dump_registers(sig->data);
+    
+    if (task->state == TASK_BLOCKED &&
+            task->owner->status == TASK_SUSPENDED &&
+            signal == SIGCONT) {
+        //printk("SIGCONT is now queued in %d\n", task->pid);
+        task->flags &= ~(TFLAG_WAITED);
+        task->owner->status = 0;
+        task->state = TASK_PREEMPTED;
+        return;
 
+        struct list_elem *elem;
+        printk("tasks in run queue:\n");
+        //spin_lock(&all_tasks_lock);
+        list_foreach_raw(__ALL_TASKS_PTR, elem) {
+            struct task *task = list_entry(elem, struct task, all_elem);
+            __dump_task(task);
+        }
+        //spin_unlock(&all_tasks_lock);
+        printk("zombie processes:\n");
+        extern struct list zombie_processes;
+        list_foreach_raw(&zombie_processes, elem) {
+            struct task *task = list_entry(elem, struct task, all_elem);
+            __dump_process(task);
+        }
+    }
+
+    if (task->state == TASK_SLEEPING) {
+        task->flags |= TFLAG_INTERRUPTED;
+        task->state = TASK_PREEMPTED;
+    }
 
     list_push_back(&task->signal.pending_signals, &sig->elem);
 }
@@ -72,9 +110,12 @@ send_signal_group(pid_t pgid, int signal)
 {
     struct task *task = NULL;
     struct list_elem *elem;
+
     list_foreach_raw(__ALL_TASKS_PTR, elem) {
         task = list_entry(elem, struct task, all_elem);
-        if (task->pgid == pgid) {
+        if (task->pid == pgid || task->pgid == pgid) {
+            //printk("sent a %s sig to pgid %d pid %d\n", signal_to_string(signal),
+                    //task->pgid, task->pid);
             __send_signal(task, signal); 
         }
     }
@@ -119,24 +160,36 @@ send_signal_session_of(struct task *task, int signal)
 }
 
 void
-default_sigaction(struct task *task, int signum)
+default_sigaction(struct task *task, struct signal *sig)
 {
-    if (signum == SIGCONT) {
-        /* XXX FIXME: this is not implemented yet properly */
-        task->state = TASK_PREEMPTED;
-        /* XXX: fallthrough until this is clarified and fixed */
+    if (sig->id == SIGCONT) {
+        free(sig);
+        task->signal.current_signal = NULL;
+        task->signal.sig_state = SIG_STATE_NULL;
+        return;
     }
 
-    if (signum == SIGSTOP ||
-            signum == SIGTSTP ||
-            signum == SIGTTOU ||
-            signum == SIGTTIN) {
-        /* XXX FIXME: not correct */
-        task->state = TASK_BLOCKED;
-        /* XXX: fallthrough until this is clarified and fixed */
+    /* default action of SIGCHLD is to ignore */
+    if (sig->id == SIGCHLD) {
+        free(sig);
+        task->signal.current_signal = NULL;
+        task->signal.sig_state = SIG_STATE_NULL;
+        return;
     }
 
-    do_fatal_signal(task, signum);
+    if (sig->id == SIGSTOP ||
+            sig->id == SIGTSTP ||
+            sig->id == SIGTTOU ||
+            sig->id == SIGTTIN) {
+        int sigid = sig->id;
+        free(sig);
+        task->signal.current_signal = NULL;
+        task->signal.sig_state = SIG_STATE_NULL;
+        task_suspend(task, sigid);
+        return;
+    }
+
+    do_fatal_signal(task, sig->id);
 }
 
 void
@@ -148,9 +201,17 @@ signal_register_handler(struct task *task, int signum, sighandler_t handler)
     if (signum == SIGKILL || signum == SIGSTOP)
         return;
 
-    //printk("registering signal handler for %s to 0x%x\n", signal_to_string(signum),
+    //printk("registering signal handler for %s(%d) to 0x%x\n", signal_to_string(signum), signum,
             //handler);
     sig->signal_handlers[signum] = handler;
+}
+
+sighandler_t
+signal_get_disp(struct task *task, int signum)
+{
+    struct signal_struct *sig = &task->signal;
+
+    return sig->signal_handlers[signum];
 }
 
 void
@@ -159,12 +220,32 @@ ret_from_signal(void)
     struct task *task = current_task;
     struct signal_struct *sig = &task->signal;
 
-    //printk("RETURNING FROM SIGNAL &task 0x%x %x \n", &task, task->regs);
     //dump_registers(&sig->current_signal->context);
+
+    //printk("context of %s is at 0x%x\n", signal_to_string(sig->current_signal->id),
+            //&sig->current_signal->context);
+    //dump_registers(&sig->current_signal->context);
+    
+    panic_ifnot(sig->current_signal);
+    //printk("RETURNING FROM SIGNAL %s &task 0x%x %x \n", signal_to_string(sig->current_signal->id), &task, task->regs);
 
     //task->regs = &sig->current_signal->context;
     memcpy(task->regs, &sig->current_signal->context, sizeof(struct pt_regs));
+
+    /* if the task has been processing a syscall, then we can't continue
+     * executing the syscall. fixup the system call return code to EINTR and
+     * pass the control and decision to userspace
+     */
+    if (task->flags & TFLAG_PROCESSING_SYSCALL) {
+        task->regs->eax = -EINTR;
+        task->flags &= ~TFLAG_PROCESSING_SYSCALL;
+    }
+
+    free(sig->current_signal);
+    sig->current_signal = NULL;
     sig->sig_state = SIG_STATE_NULL;
+    //printk("finished ret_from_signal\n");
+    task->flags |= TFLAG_NO_SIGNAL;
     reschedule_to(task);
 }
 
@@ -184,13 +265,15 @@ do_signal_handle(struct task *task, int signum, sighandler_t handler)
     sig->sig_state = SIG_STATE_HANDLING;
 
     /* save the bottom of the stack */
-    sig->unused_stack_bot = (void *) VIRT_BASE - 0x2000;
+    sig->unused_stack_bot = (void *) VIRT_BASE - (0x1000 * 11);
 
     /* first, save the old stack pointer */
     sig->unused_stack = (void *) task->sys_regs;
 
     /* save the context */
     memcpy(&sig->current_signal->context, task->sys_regs, sizeof(struct pt_regs));
+    //printk("Wooohoo\n");
+    //dump_registers(task->sys_regs);
 
     /* map the signal stack */
     map_page(task->mm, sig->stack_phys_page, (uint32_t) sig->unused_stack_bot, 1);
@@ -249,16 +332,98 @@ do_signal_handle(struct task *task, int signum, sighandler_t handler)
     task->regs = (void *) stack_ptr;
 }
 
+int
+signal_is_blocked(struct signal_struct *sig, int signum)
+{
+    return sig->sig_mask & (1 << signum);
+}
+
+void
+signal_set_mask(struct task *task, uint32_t mask)
+{
+    task->signal.sig_mask = mask;
+}
+
+void
+signal_get_mask(struct task *task)
+{
+    return task->signal.sig_mask;
+}
+
+int
+signal_should_resched(struct task *task)
+{
+    struct signal_struct *sig = &task->signal;
+
+    /* if there are no pending signals, then don't reschedule */
+    if (!task_has_pending_signals(task))
+        return 0;
+
+    if (sig->sig_flags & SFLAG_RESCHED) {
+        sig->sig_flags &= ~SFLAG_RESCHED;
+        return 1;
+    }
+
+    return 0;
+}
+
 void
 signal_handle(struct task *task)
 {
     struct signal_struct *sig = &task->signal;
     struct signal *signal;
+    struct list backup_list;
     int signum;
 
+    //printk("pid %d: looking for a signal to process, there are %d pending\n",
+            //task->pid, list_size(&sig->pending_signals));
+    spin_lock(&sig->sig_lock);
+
+    /* if in the meantime we started processing, return */
+    if (signal_processing(task)) {
+        //printk("pid %d: oops a signal is already processing\n", task->pid);
+        spin_unlock(&sig->sig_lock);
+        return;
+    }
+
+    //printk("pid %d: finding a signal to process\n", task->pid);
+
+    list_init(&backup_list);
+retry:
     signal = list_entry(list_pop_front(&sig->pending_signals), struct signal, elem);
     signum = signal->id;
 
+
+    /* check if the signal is blocked */
+    if (signal_is_blocked(sig, signum)) {
+        /* save this signal */
+        list_push_back(&backup_list, &signal->elem);
+
+        /* if there are no more pending signals, restore the list,
+         * and return to scheduling
+         */
+        if (list_empty(&sig->pending_signals)) {
+            while (!list_empty(&backup_list)) {
+                signal = list_entry(list_pop_front(&backup_list), struct signal, elem);
+                list_push_back(&sig->pending_signals, &signal->elem);
+            }
+
+            spin_unlock(&sig->sig_lock);
+            return;
+        } else goto retry;
+    } else {
+        struct signal *old_sig = signal;
+
+        /* check if we pushed any signal away */
+        while (!list_empty(&backup_list)) {
+            signal = list_entry(list_pop_front(&backup_list), struct signal, elem);
+            list_push_back(&sig->pending_signals, &signal->elem);
+        }
+
+        signal = old_sig;
+    }
+
+    sig->sig_state = SIG_STATE_HANDLING;
     sig->current_signal = signal;
 
     //printk("handling signal in pid %d: %s, action %s\n",
@@ -266,12 +431,69 @@ signal_handle(struct task *task)
              //== SIG_DFL ? "default action" : sig->signal_handlers[signum] == SIG_IGN ?
                 //"ignore" : "handler");
 
-    if (sig->signal_handlers[signum] == SIG_DFL)
-        default_sigaction(task, signum);
-    else if (sig->signal_handlers[signum] == SIG_IGN)
+    //dump_registers(task->regs);
+
+    if (sig->signal_handlers[signum] == SIG_DFL) {
+        default_sigaction(task, signal);
+    } else if (sig->signal_handlers[signum] == SIG_IGN) {
+        sig->sig_state = SIG_STATE_NULL;
+        sig->current_signal = NULL;
+        free(signal);
+        spin_unlock(&sig->sig_lock);
         return;
-    else
+    } else
         do_signal_handle(task, signum, sig->signal_handlers[signum]);
+
+    spin_unlock(&sig->sig_lock);
+}
+
+void
+copy_signals(struct task *dst, struct task *src)
+{
+    struct signal_struct *sdst = &dst->signal;
+    struct signal_struct *ssrc = &src->signal;
+
+    for (int i = MIN_SIG; i < MAX_SIG; i ++)
+        sdst->signal_handlers[i] = ssrc->signal_handlers[i];
+
+    /* copy the sigmask */
+    sdst->sig_mask = ssrc->sig_mask;
+}
+
+void
+signal_reset(struct task *task)
+{
+    struct signal_struct *sig = &task->signal;
+    int i;
+
+    /* set default actions */
+    for (i = MIN_SIG; i < MAX_SIG; i ++)
+        sig->signal_handlers[i] = SIG_DFL;
+
+    /* SIGCHLD is ignored by default */
+    //sig->signal_handlers[SIGCHLD] = SIG_IGN;
+}
+
+void
+signal_reset_for_execve(struct task *task)
+{
+    struct signal_struct *sig = &task->signal;
+    int i;
+
+    /* set default actions */
+    for (i = MIN_SIG; i < MAX_SIG; i ++) {
+        if (sig->signal_handlers[i] == SIG_IGN) {
+            /* leave as ignored */
+            sig->signal_handlers[i] = SIG_IGN;
+        } else {
+            /* all signals that were not ignored are reset to their default action */
+            sig->signal_handlers[i] = SIG_DFL;
+        }
+
+    }
+
+    /* SIGCHLD is ignored by default */
+    //sig->signal_handlers[SIGCHLD] = SIG_IGN;
 }
 
 void
@@ -285,12 +507,13 @@ signal_init(struct task *task)
     /* initalize pending signals */
     list_init(&sig->pending_signals);
 
-    /* set default actions */
-    for (i = MIN_SIG; i <= MAX_SIG; i ++)
-        sig->signal_handlers[i] = SIG_DFL;
+    /* reset the signal mask */
+    sig->sig_mask = 0;
 
-    /* SIGCHLD is ignored by default */
-    sig->signal_handlers[SIGCHLD] = SIG_IGN;
+    /* reset signal handlers */
+    signal_reset(task);
+
+    spin_lock_init(&sig->sig_lock);
 
     /* allocate signal stack */
     sig->stack_phys_page = palloc_get_page();

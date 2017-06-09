@@ -8,6 +8,7 @@
 #include <levos/uname.h>
 #include <levos/signal.h>
 #include <levos/socket.h>
+#include <levos/work.h>
 
 #define ARGS_MAX 16
 #define ENVS_MAX 16
@@ -80,6 +81,9 @@ __verify_buffer(uint32_t start, size_t sz)
 static int
 verify_buffer(void *p, size_t sz)
 {
+    if (p > VIRT_BASE || p + sz > VIRT_BASE)
+        return 1;
+    vma_try_prefault(current_task, p, sz);
     return __verify_buffer((uint32_t) p, sz);
 }
 
@@ -154,17 +158,37 @@ copy_array_from_user(char **ptr, int max)
     return arr;
 }
 
+void
+free_copied_array(char **arr)
+{
+    free(arr[0]);
+    free(arr);
+}
+
 
 static int
 sys_open(char *__filename, int flags, int mode)
 {
     struct file *f;
     struct task *task = current_task;
-    char *filename;
+    char *filename, *full_filename;
     int i, need_free = 0;
+
+    //printk("%s\n", __func__);
 
     if (verify_buffer_string(__filename, PATH_MAX))
         return -EFAULT;
+
+    if (flags & ~(O_TRUNC | O_NOCTTY | O_CLOEXEC | O_CREAT | O_WRONLY | O_RDWR | O_EXCL))
+        printk("pid %d: unsupported openflag detected in 0x%x isol: 0x%x\n",
+                current_task->pid, flags,
+                flags & ~(O_TRUNC | O_NOCTTY | O_CLOEXEC | O_CREAT | O_WRONLY | O_RDWR | O_EXCL));
+
+    /* we don't support O_TRUNC and O_RDONLY */
+    if (flags & O_TRUNC &&
+            flags & O_RDWR == 0 &&
+            flags & O_WRONLY == 0)
+        return -EINVAL;
 
     /* can I derefence this? fixme */
     if (__filename[0] != '/') {
@@ -172,50 +196,80 @@ sys_open(char *__filename, int flags, int mode)
         need_free = 1;
     } else filename = __filename;
 
-    f = vfs_open(filename);
+    full_filename = strdup(filename);
+
+    //printk("full filename is \"%s\"\n", full_filename);
+
+    f = vfs_open(full_filename);
     if (IS_ERR(f)) {
         int err = PTR_ERR(f);
         if (err == -ENOENT) {
             if (flags & O_CREAT) {
-                f = vfs_create(filename);
+                f = vfs_create(full_filename);
                 if (IS_ERR(f)) {
                     if (need_free) free(filename);
+                    free(full_filename);
+                    //printk("%s r0: %s\n", __func__, errno_to_string(PTR_ERR(f)));
                     return PTR_ERR(f);
                 }
 
                 goto xc;
             }
 
+            //printk("%s doesn't exist and O_CREAT wasnt supplied\n",
+                        //full_filename);
             if (need_free) free(filename);
+            free(full_filename);
+            //printk("%s r1: %s\n", __func__, errno_to_string(-ENOENT));
             return -ENOENT;
         }
 
         if (need_free) free(filename);
+        free(full_filename);
+        //printk("%s r2: %s\n", __func__, errno_to_string(err));
         return err;
+    }
+
+    if (flags & O_TRUNC) {
+        int err = vfs_truncate(f);
+        if (err) {
+            if (need_free) free(filename);
+            free(full_filename);
+            vfs_close(f);
+            return err;
+        }
     }
 
     if (f->isdir && (flags & O_WRONLY || flags & O_RDWR)) {
         if (need_free) free(filename);
+        free(full_filename);
+        //printk("%s r3: %s\n", __func__, errno_to_string(-EISDIR));
         return -EISDIR;
     }
     
     if (flags & O_EXCL && flags & O_CREAT) {
         vfs_close(f);
         if (need_free) free(filename);
+        free(full_filename);
+        //printk("%s r4: %s\n", __func__, errno_to_string(-EEXIST));
         return -EEXIST;
     }
 
 xc:
+    f->mode = mode;
     for (i = 0; i < FD_MAX; i ++) {
         if (task->file_table[i] == NULL) {
             task->file_table[i] = f;
-            f->refc ++;
+            //f->full_path = full_filename;
+            free(full_filename); /* todo: figure this out */
             if (need_free) free(filename);
+            //printk("%s r6: fd %d\n", __func__, i);
             return i;
         }
     }
     
     if (need_free) free(filename);
+    //printk("%s r5: %s\n", __func__, errno_to_string(-EMFILE));
     return -EMFILE;
 }
 
@@ -223,14 +277,9 @@ static int
 do_close(int fd)
 {
     struct file *f = current_task->file_table[fd];
-    f->refc --;
-
+    //printk("%s: fd %d refc %d\n", __func__, fd, f->refc);
+    vfs_close(f);
     current_task->file_table[fd] = NULL;
-    if (f->refc == 0) {
-        if (f->fops->close)
-            f->fops->close(f);
-    }
-
     return 0;
 }
 
@@ -269,7 +318,9 @@ sys_stat(char *__fn, struct stat *st)
         need_free = 1;
     } else fn = __fn;
 
-    //printk("canonical filename: %s\n", fn);
+    memset(st, 0, sizeof(*st));
+
+    //printk("%s: canonical filename: %s\n", __func__, fn);
 
     rc = vfs_stat(fn, st);
     if (need_free)
@@ -293,13 +344,24 @@ sys_fstat(int fd, struct stat *st)
     if (!f)
             return -EBADF;
 
-    f->fops->fstat(f, st);
+    memset(st, 0, sizeof(*st));
+
+    /*
+    printk("well fops is at 0x%x\n", f->fops);
+    if (f->full_path) {
+        printk("FSTAT: %s\n", f->full_path);
+    } else {
+        printk("doesnt have a full_path so the fops is at 0x%x\n", f->fops);
+    }*/
+
+    return f->fops->fstat(f, st);
 }
 
 static int
-sys_execve(char *fn, char **argvp, char **envp)
+sys_execve(char *fn, char **u_argvp, char **u_envp)
 {
     int rc = 0;
+    char **argvp, **envp;
 
     if (verify_buffer_string(fn, PATH_MAX))
         return -EFAULT;
@@ -310,29 +372,67 @@ sys_execve(char *fn, char **argvp, char **envp)
     memset(kfn, 0, strlen(fn) + 1);
     memcpy(kfn, fn, strlen(fn));
 
-    //printk("%s: %s\n", __func__, fn);
+    char *full_path = __canonicalize_path(current_task->cwd, kfn);
+    free(kfn);
+    kfn = full_path;
 
     struct file *f = vfs_open(kfn);
-    if (f == NULL || IS_ERR(f))
+    if (f == NULL || IS_ERR(f)) {
+        free(kfn);
         return -ENOENT;
+    }
 
     __flush_tlb();
 
-    argvp = copy_array_from_user(argvp, ARGS_MAX);
-    if (IS_ERR(argvp) && PTR_ERR(argvp) == -EFAULT)
+    argvp = copy_array_from_user(u_argvp, ARGS_MAX);
+    if (IS_ERR(argvp) && PTR_ERR(argvp) == -EFAULT) {
+        free(kfn);
         return -EFAULT;
+    }
 
-    envp = copy_array_from_user(envp, ENVS_MAX);
-    if (IS_ERR(envp) && PTR_ERR(envp) == -EFAULT)
+    envp = copy_array_from_user(u_envp, ENVS_MAX);
+    if (IS_ERR(envp) && PTR_ERR(envp) == -EFAULT) {
+        free_copied_array(argvp);
+        free(kfn);
         return -EFAULT;
+    }
 
-    vma_unload_all(current_task);
-    map_unload_user_pages(current_task->mm);
-    
+    //printk("EXECVE %d: FULL_PATH %s KFN %s\n", current_task->pid, f->full_path, kfn);
 
-    rc = load_elf(f, argvp, envp);
+    rc = elf_probe(f);
     if (rc)
         return rc;
+
+    vma_unload_all(current_task);
+
+    map_unload_user_pages(current_task->mm);
+    //current_task->mm = copy_page_dir(kernel_pgd);
+    //__flush_tlb();
+
+    vma_init(current_task);
+
+    free(kfn);
+
+    current_task->bstate.base_brk =
+        current_task->bstate.logical_brk =
+        current_task->bstate.actual_brk = 0;
+    
+    rc = load_elf(f, argvp, envp);
+    if (rc) {
+        free_copied_array(envp);
+        free_copied_array(argvp);
+        free(kfn);
+        return rc;
+    }
+
+    __flush_tlb();
+
+    task_do_cloexec(current_task);
+
+    signal_reset_for_execve(current_task);
+
+    /* the original reference can now be given up */
+    vfs_close(f);
 
     //printk("executing elf...\n");
 
@@ -345,11 +445,16 @@ sys_execve(char *fn, char **argvp, char **envp)
 static int
 sys_exit(int err_code)
 {
+    if (task_has_pending_signals(current_task))
+        current_task->flags |= TFLAG_NO_SIGNAL;
+
     current_task->state = TASK_DYING;
     current_task->exit_code = err_code;
     current_task->owner->exit_code = err_code;
     current_task->owner->status = TASK_EXITED;
-    //printk("pid %d exited with exit code %d\n", current_task->pid, err_code);
+    extern int __task_need_cleanup;
+    __task_need_cleanup ++;
+    //printk("pid %d(%s) exited with exit code %d\n", current_task->pid, current_task->comm, err_code);
     sched_yield();
     __not_reached();
 }
@@ -383,20 +488,18 @@ sys_fork(void)
 {
     struct task *child;
     struct task *parent = current_task;
-    uint32_t addr = VIRT_BASE - 0x1000;//PG_RND_DOWN((int) parent->regs->esp);
 
     child = create_user_task_fork(NULL);
 
     /* copy stack */
-    memcpy((void *) 0xD0000000 - 0x1000, (void *)VIRT_BASE - 0x1000, 0x1000);
+    // memcpy((void *) 0xD0000000 - 0x1000, (void *)VIRT_BASE - 0x1000, 0x1000);
 
     /* copy irq stack */
-    memcpy(child->irq_stack_bot, parent->irq_stack_bot, 0x1000);
+    // memcpy(child->irq_stack_bot, parent->irq_stack_bot, 0x1000);
 
     /* set the registers to point on their stack */
-    child->regs = (void *) ((unsigned long)parent->sys_regs - (unsigned long)parent->irq_stack_bot) + (unsigned long)child->irq_stack_bot;
-    child->regs->eax = 0;
-
+    // child->regs = (void *) ((unsigned long)parent->sys_regs - (unsigned long)parent->irq_stack_bot) + (unsigned long)child->irq_stack_bot;
+    //
     sched_add_child(parent, child);
     sched_add_rq(child);
 
@@ -502,9 +605,55 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
     /* TODO: support the opts field */
     //if (opts != 0)
         //return -EINVAL;
+    
+    //printk("%s: %d(%s) wants to wait on pid %d(%s)\n",
+            //__func__, current_task->pid, current_task->comm,
+            //pid, get_comm_for_pid(pid));
 
     if (pid == -1) {
-        /* wait for any child */
+        struct list_elem *elem;
+
+        /* check zombie tasks */
+        extern struct list zombie_processes;
+retry:
+        list_foreach_raw(&zombie_processes, elem) {
+            struct process *proc = list_entry(elem, struct process, elem);
+
+            if (proc->ppid == current_task->pid) {
+                if (wstatus) {
+                    if (proc->status == TASK_EXITED)
+                        *wstatus = WAIT_EXIT(proc->exit_code);
+                    else if (proc->status == TASK_DEATH_BY_SIGNAL)
+                        *wstatus = WAIT_SIG(proc->exit_code);
+                    else {
+                        printk("CRITICAL: we have a zombie not killed by a signal,"
+                                    " or exited\n");
+                    }
+                }
+                list_remove(&proc->elem);
+                process_destroy(proc);
+                return proc->pid;
+            }
+        }
+
+        /* check for status changes */
+        list_foreach_raw(&current_task->children_list, elem) {
+            struct task *task = list_entry(elem, struct task, children_elem);
+
+            if (!(task->flags & TFLAG_WAITED) && task->owner->status == TASK_SUSPENDED) {
+                task->flags |= TFLAG_WAITED;
+                *wstatus = WAIT_STOPPED(task->owner->exit_code);
+                return task->pid;
+            }
+        }
+
+        /* nope */
+        if (opts & WNOHANG)
+            return 0;
+        else {
+            sleep(10);
+            goto retry;
+        }
     } else if (pid < -1) {
         /* wait for any child of ABS(pid) */
     } else if (pid == 0) {
@@ -517,15 +666,26 @@ sys_waitpid(pid_t pid, int *wstatus, int opts)
 
         if (target->task == NULL) {
             /* the task has already finished, return */
-            *wstatus = WAIT_EXIT(target->exit_code);
-            return 0;
+            //printk("the task waited on has finished, its exit_code was %d\n",
+                    //target->exit_code);
+            if (target->status == TASK_EXITED)
+                *wstatus = WAIT_EXIT(target->exit_code);
+            else if (target->status == TASK_DEATH_BY_SIGNAL)
+                *wstatus = WAIT_SIG(target->exit_code);
+            else panic("unknown waitpid(2) death\n");
+            return pid;
         }
+
+        /* if WNOHANG is specified, and since a child exists, return 0 */
+        if (opts & WNOHANG)
+            return 0;
 
         *wstatus = task_do_wait(current_task, target);
 
-        return 0;
+        return pid;
     }
 
+    printk("CRITICAL: unsupported waitpid(2)\n");
     return -ENOSYS;
 }
 
@@ -541,16 +701,22 @@ sys_lseek(int fd, size_t off, int whence)
     if (!f)
         return -EBADF;
 
+    if (f->type == FILE_TYPE_PIPE)
+        return -ESPIPE;
+
+    if ((whence == SEEK_SET && off < 0) ||
+            (whence == SEEK_CUR && f->fpos + off < 0) ||
+            (whence == SEEK_END && f->fpos + off < 0))
+        return -EINVAL;
+
     if (whence == SEEK_SET)
         f->fpos = off;
     else if (whence == SEEK_CUR)
         f->fpos += off;
     else if (whence == SEEK_END)
-        f->fpos = 0; /* FIXME */
+        f->fpos = f->length + off;
 
-    /* FIXME: pipe support missing */
-
-    return -EINVAL;
+    return f->fpos;
 }
 
 int
@@ -569,10 +735,12 @@ sys_dup(int fd)
     for (i = 0; i < FD_MAX; i ++) {
         if (current_task->file_table[i] == NULL) {
             current_task->file_table[i] = f;
-            f->refc ++;
+            vfs_inc_refc(f);
             return i;
         }
     }
+
+    return -EMFILE;
 }
 
 int
@@ -598,6 +766,11 @@ sys_dup2(int fd, int to)
         do_close(to);
 
     current_task->file_table[to] = f;
+
+    /* clear FD_CLOEXEC */
+    current_task->file_table_flags[to] = 0;
+
+    vfs_inc_refc(f);
     return to;
 }
 
@@ -622,15 +795,24 @@ sys_readdir(int fd, struct linux_dirent *buf, int count)
     return f->fops->readdir(f, buf);
 }
 
-int
+sighandler_t
 sys_signal(int signum, sighandler_t handler)
 {
+    sighandler_t old;
+
     if (!signal_is_signum_valid(signum))
         return -EINVAL;
 
+    old = signal_get_disp(current_task, signum);
+
     signal_register_handler(current_task, signum, handler);
 
-    return 0;
+    //if (signum == SIGCHLD) {
+        //printk("pid %d(%s) registered SIGCHLD handler to 0x%x\n",
+                //current_task->pid, current_task->comm, handler);
+    //}
+
+    return old;
 }
 
 int
@@ -667,6 +849,7 @@ sys_kill(int pid, int sig)
 
     if (pid < -1) {
         int pgid = -pid;
+        printk("kill: from %d to pgid %d\n", current_task->pid, pgid);
         send_signal_group(pgid, sig);
         return 0;
     }
@@ -706,6 +889,10 @@ sys_setpgid(pid_t pid, pid_t pgid)
      * like the thing to do?
      */
     if (!pg_leader)
+        return -ESRCH;
+
+    task = get_task_for_pid(pid);
+    if (!task)
         return -ESRCH;
 
     /* if we are moving a task, then it must match the session ids */
@@ -802,8 +989,10 @@ sys_chdir(char *fn)
     memcpy(kbuf, fn, len);
 
     ptr = canonicalize_path(current_task->cwd, kbuf);
-    if (IS_ERR(ptr))
+    if (IS_ERR(ptr)) {
+        free(kbuf);
         return PTR_ERR(ptr);
+    }
 
     free(current_task->cwd);
     free(kbuf);
@@ -821,32 +1010,54 @@ sys_sbrk(int incr)
 
     //printk("%s: incr: %d\n", __func__, incr);
 
+    if (incr == 0)
+        return bs->logical_brk;
+
+    if (incr == 0x37214000)
+        panic("are you retarded\n");
+
     if (incr < 0) {
-        printk("WARNING: application %d is trying to free memory\n",
-                t->pid);
-        return 0;
+        ret = bs->logical_brk;
+
+        //panic("WARNING: application %d is trying to free %d bytes of memory\n",
+                //t->pid, -incr);
+
+        bs->logical_brk -= (-1) * incr;
+
+        return ret;
     }
+
+    //while (incr % 0x1000)
+        //incr ++;
 
     if (bs->logical_brk + incr < bs->actual_brk) {
         ret = bs->logical_brk;
         bs->logical_brk += incr;
-        //printk("STATE: actual: 0x%x logical 0x%x ret 0x%x\n",
-                //bs->actual_brk, bs->logical_brk, ret);
+        memset(ret, 0, incr);
+        //printk("STATE EASY: actual: 0x%x logical 0x%x ret 0x%x\n",
+               //bs->actual_brk, bs->logical_brk, ret);
         return ret;
     } else {
-        int num = (incr / 0x1000) + 1, i;
+        int i, num = 1;
+        uintptr_t ret = bs->logical_brk;
+        uintptr_t i_ret = ret;
+        ret = (ret + 0xfff) & ~0xfff; /* Rounds ret to 0x1000 in O(1) */
+        bs->logical_brk += (ret - i_ret) + incr;
 
-        for (i = 0; i < num; i ++) {
-            uintptr_t p = palloc_get_page();
-            map_page_curr(p, bs->actual_brk, 1);
+        while (bs->logical_brk > bs->actual_brk) {
+            uintptr_t phys = palloc_get_page();
+            map_page_curr(phys, bs->actual_brk, 1);
+            //memset(bs->actual_brk, 0, 4096);
             bs->actual_brk += 0x1000;
         }
-        ret = bs->logical_brk;
-        bs->logical_brk += incr;
-        //printk("STATE: actual: 0x%x logical 0x%x ret 0x%x\n",
+
+        memset(ret, 0, incr);
+
+        //printk("STATE HARD: actual: 0x%x logical 0x%x ret 0x%x\n",
                 //bs->actual_brk, bs->logical_brk, ret);
         return ret;
     }
+
     return -ENOMEM;
 }
 
@@ -870,69 +1081,514 @@ sys_getcwd(char *buf, unsigned long size)
 }
 
 int
+sys_fcntl(int fd, unsigned long cmd, unsigned long arg)
+{
+    int i;
+    struct file *f;
+
+    if (fd < 0 || fd >= FD_MAX)
+        return -EBADF;
+
+    f = current_task->file_table[fd];
+    if (!f)
+        return -EBADF;
+
+    switch (cmd) {
+        case F_DUPFD:
+            if (arg < 0 || arg >= FD_MAX)
+                return -EINVAL;
+            for (i = arg; i < FD_MAX; i ++) {
+                if (current_task->file_table[i] == NULL) {
+                    current_task->file_table[i] = current_task->file_table[fd];
+                    vfs_inc_refc(current_task->file_table[i]);
+                    return i;
+                }
+            }
+            return -EMFILE;
+        case F_GETFD:
+            return current_task->file_table_flags[fd];
+        case F_SETFD:
+            current_task->file_table_flags[fd] |= arg;
+            return 0;
+    }
+
+    printk("WARNING: Unimplement fnctl(2) cmd: %d with arg 0x%x\n", cmd, arg);
+    return -ENOSYS;
+}
+
+int
+sys_sysconf(int req)
+{
+    if (req == 4)
+        return FD_MAX;
+
+    if (req == 2)
+        return 100;
+
+    if (req == 8)
+        return 4096;
+
+    if (req == 11)
+        return 32768;
+
+    printk("unknown sysconf: %d\n", req);
+
+    return -EINVAL;
+}
+
+int
+sys_mkdir(char *pathname, int mode)
+{
+    char *fn, need_free = 0;
+    int rc;
+
+    if (verify_buffer_string(pathname, PATH_MAX))
+        return -EFAULT;
+
+    if (pathname[0] != '/') {
+        fn =  __canonicalize_path(current_task->cwd, pathname);
+        need_free = 1;
+    } else fn = pathname;
+
+    rc = vfs_mkdir(fn, mode);
+    if (need_free)
+        free(fn);
+
+    return rc;
+}
+
+void
+__deliver_alarm(void *aux)
+{
+    struct task *task = aux;
+
+    send_signal(task, SIGALRM);
+}
+
+int
+sys_alarm(int secs)
+{
+    int rc = 0;
+
+    if (current_task->alarm_work) {
+        int time = current_task->alarm_work->work_at - work_get_ticks();
+        time /= 150;
+
+        work_cancel(current_task->alarm_work);
+
+        rc = time;
+        if (rc == 0)
+            rc = 1;
+    }
+
+    struct work *work = work_create(__deliver_alarm, current_task);
+
+    schedule_work_delay(work, secs * 150);
+
+    current_task->alarm_work = work;
+
+    return rc;
+}
+
+int
+sys_secsleep(int secs)
+{
+    sleep(secs * 150);
+
+    if (current_task->flags & TFLAG_INTERRUPTED) {
+        current_task->flags &= ~TFLAG_INTERRUPTED;
+        printk("oops we got woken up, ret eintr\n");
+        return -EINTR;
+    }
+
+    printk("we have successfully slept enough\n");
+
+    return 0;
+}
+
+int
+sys_gettimeofday(struct timeval *tv, void *z)
+{
+    return gettimeofday(tv, z);
+}
+
+struct mmap_arg_struct {
+    void *addr;
+    size_t len;
+    int prot;
+    int flags;
+    int fd;
+    size_t offset;
+};
+
+int
+sys_mmap(struct mmap_arg_struct *arg)
+{
+    struct file *f = NULL;
+
+    if (verify_buffer(arg, sizeof(*arg)))
+        return -EFAULT;
+
+    if (!(arg->flags & MAP_ANONYMOUS)) {
+        if (arg->fd < 0 || arg->fd >= FD_MAX)
+            return -EBADF;
+
+        f = current_task->file_table[arg->fd];
+        if (!f)
+            return -EBADF;
+    }
+
+    return (int) do_mmap(arg->addr, arg->len, arg->prot, arg->flags, f, arg->offset);
+}
+
+int
+sys_munmap(void *addr, size_t len)
+{
+    return -ENOSYS;
+}
+
+int
+sys_getppid()
+{
+    return current_task->ppid;
+}
+
+int
+sys_sigprocmask(int how, unsigned long *new, unsigned long *old)
+{
+    uint64_t old_mask = signal_get_mask(current_task);
+
+    if (new == NULL)
+        goto set_old;
+
+    if (how == SIG_BLOCK) {
+        signal_set_mask(current_task, old_mask | (uint32_t)*new);
+        goto set_old;
+    } else if (how == SIG_UNBLOCK) {
+        signal_set_mask(current_task, old_mask & ~((uint32_t)*new));
+        goto set_old;
+    } else if (how == SIG_SETMASK) {
+        signal_set_mask(current_task, (uint32_t) *new);
+        goto set_old;
+    }
+
+    return -EINVAL;
+
+set_old:
+        //reschedule_to(current_task);
+        if (old == NULL) {
+            return 0;
+        } else if (verify_buffer(old, sizeof(unsigned long)))
+            return -EFAULT;
+
+        *old = (uint32_t) old_mask;
+        return 0;
+}
+
+
+void
+__execve_dump_array(char **argv)
+{
+    int argc = 0;
+
+    while (argv[argc ++])
+        ;
+
+    printk("{ ");
+    for (int i = 0; i < argc; i ++)
+        printk("%s%s", argv[i], i == argc - 1 ? "" : ", ");
+    printk("}");
+}
+
+void
+__trace_syscall(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    int pid = current_task->pid;
+    //printk("syscall from 0x%x: ", current_task->regs->eip);
+    switch(no) {
+        case 0x1:
+            printk("pid %d sys_exit(%d)\n", pid, a);
+            return;
+        case 0x2:
+            printk("pid %d sys_fork()\n", pid);
+            return;
+        case 0x3:
+            printk("pid %d sys_read(%d, 0x%x, %d)\n", pid, a, b, c);
+            return;
+        case 0x4:
+            printk("pid %d sys_write(%d, 0x%x, %d)\n", pid, a, b, c);
+            return;
+        case 0x5:
+            printk("pid %d sys_open(%s, %s%s%s%s%s%s%s0x%x, 0x%x)\n", pid, a,
+                    b & O_WRONLY ? "O_WRONLY | " : "",
+                    b & O_RDWR ?   "O_RDWR | "   : "",
+                    b & O_EXCL ?   "O_EXCL | "   : "",
+                    b & O_TRUNC ? "O_TRUNC | " : "",
+                    b & O_CREAT ? "O_CREAT | "   : "",
+                    b & O_CLOEXEC ? " O_CLOEXEC | " : "",
+                    b & O_NOCTTY ? "O_NOCTTY | " : "",
+                    b & ~(O_TRUNC | O_WRONLY | O_RDWR | O_EXCL | O_CREAT | O_CLOEXEC), c);
+            return;
+        case 0x6:
+            printk("pid %d sys_close(%d)\n", pid, a);
+            return;
+        case 0x7:
+            printk("pid %d sys_waitpid(%d, 0x%x, %d)\n", pid, a, b, c);
+            return;
+        case 0xB:
+            printk("pid %d sys_execve(%s, ", pid, a);
+            __execve_dump_array(b);
+            printk(", ");
+            __execve_dump_array(c);
+            printk(")\n");
+            return;
+        case 0xC:
+            printk("pid %d sys_chdir(%s)\n", pid, a);
+            return;
+        case 0x11:
+            printk("pid %d sys_socket(%d, %d, %d)\n", pid, a, b, c);
+            return;
+        case 0x12:
+            printk("pid %d sys_stat(%s, 0x%x)\n", pid, a, b);
+            return;
+        case 0x13:
+            printk("pid %d sys_lseek(%d, %d, %d)\n", pid, a, b, c);
+            return;
+        case 0x14:
+            printk("pid %d sys_getpid()\n", pid);
+            return;
+        case 0x1b:
+            printk("pid %d sys_alarm(%d)\n", pid, a);
+            return;
+        case 0x1c:
+            printk("pid %d sys_fstat(%d, 0x%x)\n", pid, a, b);
+            return;
+        case 0x1f:
+            printk("pid %d sys_connect(%d, 0x%x, %d)\n", pid, a, b, c);
+            return;
+        case 0x23:
+            printk("pid %d sys_sbrk(0x%x)\n", pid, a);
+            return;
+        case 0x25:
+            printk("pid %d sys_kill(%d, %s)\n", pid, a, signal_to_string(b));
+            return;
+        case 0x27:
+            printk("pid %d sys_mkdir(%s, %d)\n", pid, a, b);
+            return;
+        case 0x29:
+            printk("pid %d sys_dup(%d)\n", pid, a);
+            return;
+        case 0x2a:
+            printk("pid %d sys_pipe(0x%x)\n", pid, a);
+            return;
+        case 0x2c:
+            printk("pid %d sys_sysconf(%d)\n", pid, a);
+            return;
+        case 0x30:
+            printk("pid %d sys_signal(%s, 0x%x)\n", pid, signal_to_string(a), b);
+            return;
+        case 0x36:
+            printk("pid %d sys_ioctl(0x%x, 0x%x, 0x%x)\n", pid, a, b, c);return -1;
+            return;
+        case 0x37:
+            printk("pid %d sys_fcntl(0x%x, 0x%x, 0x%x)\n", pid, a, b, c);
+            return;
+        case 0x39:
+            printk("pid %d sys_setpgid(%d, %d)\n", pid, a, b);
+            return;
+        case 0x3f:
+            printk("pid %d sys_dup2(%d, %d)\n", pid, a, b);
+            return;
+        case 0x40:
+            printk("pid %d sys_getppid()\n", pid);
+            return;
+        case 0x42:
+            printk("pid %d sys_setsid()\n", pid);
+            return;
+        case 0x4e:
+            printk("pid %d sys_gettimeofday(0x%x, 0x%x)\n", pid, a, b);
+            return;
+        case 0x59:
+            printk("pid %d sys_readdir(%d, 0x%x, %d)\n", pid, a, b, c);
+            return;
+        case 0x5a:
+            printk("pid %d sys_mmap(UNIMPL)\n", pid);
+            return;
+        case 0x5b:
+            printk("pid %d sys_munmap(0x%x, 0x%x)\n", pid, a, b);
+            return;
+        case 0x6d:
+            printk("pid %d sys_uname(0x%x)\n", pid, a);
+            return;
+        case 0x7e:
+            printk("pid %d sys_sigprocmask(%d, 0x%x, 0x%x)\n", pid, a, b, c);
+            return;
+        case 0x84:
+            printk("pid %d sys_getpgid(%d)\n", pid, a);
+            return;
+        case 0xa2:
+            printk("pid %d sys_secsleep(%d)\n", pid, a);
+            return;
+        case 0xb7:
+            printk("pid %d sys_getcwd(0x%x, %d)\n", pid, a, b);
+            return;
+    }
+}
+
+void
+__trace_return(int rc)
+{
+    printk("pid %d                                ---- rc: %d (%s)\n",
+            current_task->pid, rc, errno_to_string(rc));
+}
+
+static int __sysctl_trace_sys = 0;
+
+int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
-    //printk("SYSCALL pid %d no %d\n", current_task->pid, no);
+    //printk("SYSCALL pid %d no dec:%d (hex:0x%x) a 0x%x b 0x%x c 0x%x d 0x%x\n",
+            //current_task->pid, no, no, a, b, c, d);
+
+    if (!signal_processing(current_task))
+        current_task->flags |= TFLAG_PROCESSING_SYSCALL;
+
+    if (__sysctl_trace_sys)
+        __trace_syscall(no, a, b, c, d);
+    int rc;
     switch(no) {
         case 0x1:
             sys_exit((int) a);
             __not_reached();
         case 0x2:
-            return sys_fork();
+            rc = sys_fork();
+            break;
         case 0x3:
-            return sys_read((int) a, (char *)b, (size_t) c);
+            rc = sys_read((int) a, (char *)b, (size_t) c);
+            break;
         case 0x4:
-            return sys_write((int) a, (char *)b, (size_t) c);
+            rc = sys_write((int) a, (char *)b, (size_t) c);
+            break;
         case 0x5:
-            return sys_open((char *) a, (int) b, (int) c);
+            rc = sys_open((char *) a, (int) b, (int) c);
+            break;
         case 0x6:
-            return sys_close((int) a);
+            rc = sys_close((int) a);
+            break;
         case 0x7:
-            return sys_waitpid((pid_t) a, (int *) b, (int) c);
+            rc = sys_waitpid((pid_t) a, (int *) b, (int) c);
+            break;
         case 0xB:
-            return sys_execve((char *) a, (char **) b, (char **) c);
+            rc = sys_execve((char *) a, (char **) b, (char **) c);
+            break;
         case 0xC:
-            return sys_chdir((char *) a);
+            rc = sys_chdir((char *) a);
+            break;
         case 0x11:
-            return sys_socket((int) a, (int) b, (int) c);
+            rc = sys_socket((int) a, (int) b, (int) c);
+            break;
         case 0x12:
-            return sys_stat((char *) a, (struct stat *) b);
+            rc = sys_stat((char *) a, (struct stat *) b);
+            break;
         case 0x13:
-            return sys_lseek((int) a, (size_t) b, (int) c);
+            rc = sys_lseek((int) a, (size_t) b, (int) c);
+            break;
         case 0x14:
-            return sys_getpid();
+            rc = sys_getpid();
+            break;
+        case 0x1b:
+            rc = sys_alarm((int) a);
+            break;
         case 0x1c:
-            return sys_fstat((int) a, (struct stat *) b);
+            rc = sys_fstat((int) a, (struct stat *) b);
+            break;
         case 0x1f:
-            return sys_connect((int) a, (void *) b, (size_t) c);
+            rc = sys_connect((int) a, (void *) b, (size_t) c);
+            break;
         case 0x23:
-            return sys_sbrk((int) a);
+            rc = sys_sbrk((int) a);
+            break;
         case 0x25:
-            return sys_kill((int) a, (int) b);
+            rc = sys_kill((int) a, (int) b);
+            break;
+        case 0x27:
+            rc = sys_mkdir((char *) a, (int) b);
+            break;
         case 0x29:
-            return sys_dup((int) a);
+            rc = sys_dup((int) a);
+            break;
         case 0x2a:
-            return sys_pipe((int *) a);
+            rc = sys_pipe((int *) a);
+            break;
+        case 0x2c:
+            rc = sys_sysconf((int) a);
+            break;
         case 0x30:
-            return sys_signal((int) a, (sighandler_t) b);
+            rc = sys_signal((int) a, (sighandler_t) b);
+            break;
         case 0x36:
-            return sys_ioctl((int) a, (unsigned int) b, (unsigned int) c);
+            rc = sys_ioctl((int) a, (unsigned int) b, (unsigned int) c);
+            break;
+        case 0x37:
+            rc = sys_fcntl((int) a, (int) b, (int) c);
+            break;
         case 0x39:
-            return sys_setpgid((int) a, (int) b);
+            rc = sys_setpgid((int) a, (int) b);
+            break;
         case 0x3f:
-            return sys_dup2((int) a, (int) b);
+            rc = sys_dup2((int) a, (int) b);
+            break;
+        case 0x40:
+            rc = sys_getppid();
+            break;
         case 0x42:
-            return sys_setsid();
+            rc = sys_setsid();
+            break;
+        case 0x4e:
+            rc = sys_gettimeofday((void *) a, (void *) b);
         case 0x59:
-            return sys_readdir((int) a, (struct linux_dirent *) b, (int) c);
+            rc = sys_readdir((int) a, (struct linux_dirent *) b, (int) c);
+            break;
+        case 0x5a:
+            rc = sys_mmap((void *) a);
+            break;
+        case 0x5b:
+            rc = sys_munmap((unsigned long) a, (size_t) b);
+            break;
         case 0x6d:
-            return sys_uname((struct uname *) a);
+            rc = sys_uname((struct uname *) a);
+            break;
+        case 0x7e:
+            rc = sys_sigprocmask((int) a, (void *) b, (void *)c);
+            break;
         case 0x84:
-            return sys_getpgid((int) a);
+            rc = sys_getpgid((int) a);
+            break;
+        case 0xa2:
+            rc = sys_secsleep((int) a);
+            break;
         case 0xb7:
-            return sys_getcwd((char *) a, (unsigned long) b);
+            rc = sys_getcwd((char *) a, (unsigned long) b);
+            break;
+        default:
+            syscall_undefined(no);
+            rc = -ENOSYS;
+            break;
     }
 
-    syscall_undefined(no);
-    return -ENOSYS;
+    if (__sysctl_trace_sys)
+        __trace_return(rc);
+
+    if (rc == -ENOENT) {
+        //printk("SYSCALL:ENOENTd pid %d no dec:%d (hex:0x%x) a 0x%x b 0x%x c 0x%x d 0x%x\n",
+            //current_task->pid, no, no, a, b, c, d);
+    }
+
+    __flush_tlb();
+
+    if (!signal_processing(current_task))
+        current_task->flags &= ~TFLAG_PROCESSING_SYSCALL;
+
+    //printk("result: %d (%s)\n", rc, rc >= 0 ? "success" : errno_to_string(rc));
+    return rc;
 }

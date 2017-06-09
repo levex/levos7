@@ -27,7 +27,7 @@ run_test()
     /* can't open too many files */
     for (int i = 0; i < 1024; i ++) {
         rc = open("/init", 0, 0);
-        if (rc == -1 && errno == ENFILE) {
+        if (rc == -1 && errno == EMFILE) {
             success = true;
             break;
         } else if (rc == -1) {

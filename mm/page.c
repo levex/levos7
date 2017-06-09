@@ -69,8 +69,27 @@ inline pde_t create_pde(uint32_t phys_addr, int user, int rw)
 }
 
 void __noreturn
-do_kernel_pagefault(struct pt_regs *regs, uint32_t cr2)
+do_kernel_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
 {
+    /* check if the kernel pagefaulted accessing user region */
+    if (cr2 < VIRT_BASE) {
+        //panic("ERMHAGERD\n");
+        //printk("VOILA MOTHER FUCKERS\n");
+        if ((page && !*page) || !page) {
+            int rc = vma_handle_pagefault(current_task, cr2);
+            if (rc) {
+                printk("unable to handle a missing user page accessed from kernelspace at 0x%x!\n", cr2);
+                dump_registers(regs);
+                dump_stack(8);
+                vma_dump(current_task);
+                send_signal(current_task, SIGSEGV);
+            }
+
+            return;
+        }
+        //printk("OH FUCK page 0x%x *page 0x%x\n", page, page != 0 ? *page : -1);
+    }
+
     DISABLE_IRQ();
     printk("--[cut here]--\n");
     printk("Page fault (#PF) in the kernel\n");
@@ -89,6 +108,7 @@ do_kernel_pagefault(struct pt_regs *regs, uint32_t cr2)
         printk("while executing pid=%d\n", current_task->pid);
         printk("irq stack [0x%x - 0x%x]\n", current_task->irq_stack_bot, current_task->irq_stack_top);
     }
+    __dump_code_at(regs->eip);
 
     panic("Unable to handle kernel paging request\n");
 }
@@ -126,27 +146,50 @@ get_page_from_curr(uint32_t vaddr)
 }
 
 void
-do_cow(uint32_t cr2)
+__do_cow(struct task *target, uint32_t cr2)
 {
     char *buffer = malloc(4096);
     uintptr_t p_np;
     uintptr_t the_page = PG_RND_DOWN(cr2);
+    pagedir_t pgd = target->mm;
+    page_t *pte = get_page_from_pgd(pgd, the_page);
     if (!buffer)
-        send_signal(current_task, SIGSEGV);
+        send_signal(target, SIGSEGV);
+
+    if (*pte - VIRT_BASE < 14 * 1024 * 1024) {
+        printk("freeing: 0x%x\n", PG_RND_DOWN(*pte) + VIRT_BASE);
+        na_free(0x1000, PG_RND_DOWN(*pte) + VIRT_BASE);
+    }
+
+    //printk("COW by %d for page 0x%x\n", target->pid, the_page);
 
     memcpy(buffer, (void *) the_page, 4096);
 
-    p_np = palloc_get_page();
-    replace_page(current_task->mm, the_page, create_pte(p_np, 1, 1));
+    /*printk("OUR BUFFER\n");
+    if (the_page == VIRT_BASE - 0x1000)
+        __hex_dump(the_page, buffer, 4096, 0);*/
 
-    page_t *page = get_page_from_curr(cr2);
-    pte_mark_writeable(page);
+    /*printk("THE ORIGINAL\n");
+    if (the_page == VIRT_BASE - 0x1000)
+        __hex_dump(the_page, the_page, 4096, 0);*/
+
+    p_np = palloc_get_page();
+    replace_page(target->mm, the_page, create_pte(p_np, 1, 1));
+
+    //page_t *page = get_page_from_curr(cr2);
+    //pte_mark_writeable(page);
 
     memcpy((void *) the_page, buffer, 4096);
 
     free(buffer);
 
     return;
+}
+
+void
+do_cow(uint32_t cr2)
+{
+    __do_cow(current_task, cr2);
 }
 
 int
@@ -170,7 +213,14 @@ do_user_pagefault(page_t *page, struct pt_regs *regs, uint32_t cr2)
     /* this is likely a nullptr exception */
     if (cr2 < 4096) {
         printk("unable to handle null dereference at 0x%x\n", cr2);
+        printk("task COMM: \"%s\"\n", current_task->comm);
         dump_registers(regs);
+        __dump_code_at(regs->eip);
+        printk("Stack: \n");
+        __hex_dump((int)regs->esp,
+                    (int)regs->esp,
+                    VIRT_BASE - (unsigned int)regs->esp,
+                    0);
         vma_dump(current_task);
         send_signal(current_task, SIGSEGV);
     }
@@ -200,6 +250,9 @@ handle_pagefault(struct pt_regs *regs)
     uint32_t cr2;
     page_t *page;
 
+    if (in_panic())
+        while (1);
+
     asm volatile("mov %%cr2, %0":"=r"(cr2));
 
     ///printk("--- pagefault ---\n");
@@ -214,13 +267,13 @@ handle_pagefault(struct pt_regs *regs)
 
     /* if a COW page is written then fetch new page and map */
     page = get_page_from_curr(PG_RND_DOWN(cr2));
-    if (page && pte_is_cow(*page)) {
+    if (page && (regs->error_code & (1 << 1)) && pte_is_cow(*page)) {
         do_cow(cr2);
         return;
     }
 
     if ((unsigned long) regs->eip > (unsigned long) VIRT_BASE)
-        do_kernel_pagefault(regs, cr2);
+        do_kernel_pagefault(page, regs, cr2);
 
     do_user_pagefault(page, regs, cr2);
 }
@@ -261,6 +314,9 @@ map_page(pagedir_t pgd, uint32_t phys_addr, uint32_t virt_addr, int perm)
         panic_on((int)pgt % 4096, "pagetable allocated is NOT page aligned\n");
         panic_on(!pgt, "not enough memory to %s\n", __func__) + 0x1000;
         memset(pgt, 0, 4096);
+
+        //printk("MAP: iPTE %d, iPDE %d (vaddr 0x%x) (kladdr 0x%x)\n",
+                    //ipte, ipde, virt_addr, pgt);
 
         /* map the page */
         pgt[ipte] = create_pte(phys_addr, perm, 1);
@@ -309,6 +365,21 @@ map_page_curr(uint32_t p, uint32_t v, int perm)
         return map_page(kernel_pgd, p, v, perm);
 }
 
+#if 0
+void *
+__page_insert_pde(pde_t pde)
+{
+    for (int i = 768; i < 4096; i ++) {
+        if (pde[i] == 0) {
+            pde[i] = pde;
+            __flush_tlb();
+            return i * 4096 * 1024;
+        }
+    }
+    return NULL;
+}
+#endif
+
 int
 map_page_kernel(uint32_t p, uint32_t v, int perm)
 {
@@ -342,6 +413,8 @@ __copy_pt(pde_t orig)
     if (!new_addr)
         panic("ENOMEM");
 
+    //printk("new_addr 0x%x\n", new_addr);
+
     void *orig_addr = (void *) (((orig >> PDE_ADDR_SHIFT) << 12) + VIRT_BASE);
     //printk("orig 0x%x orig_addr 0x%x\n", orig, orig_addr);
     memcpy(new_addr, orig_addr, 0x1000);
@@ -356,6 +429,8 @@ copy_page_dir(pagedir_t orig)
     if (!ret) {
         panic("UNABLE TO CLONE\n");
     }
+
+    //printk("new pagedir: 0x%x\n", ret);
     memset(ret, 0, 0x1000);
 
     memcpy(ret, orig, 0x1000);
@@ -366,6 +441,17 @@ copy_page_dir(pagedir_t orig)
         }
     }
     return ret;
+}
+
+void
+mm_destroy(pagedir_t pgd)
+{
+    int i, j;
+
+    map_unload_user_pages(pgd);
+
+    //printk("free'd pagedir: 0x%x\n", pgd);
+    na_free(0x1000, pgd);
 }
 
 void
@@ -382,7 +468,7 @@ mark_all_user_pages_cow(pagedir_t pgd)
 
             /* now loop through its pages */
             for (j = 0; j < 1024; j ++) {
-                if (!pte_present(pde_addr[j]) || !pte_writeable(pde_addr[j]))
+                if (!pte_present(pde_addr[j])) //|| !pte_writeable(pde_addr[j]))
                     continue;
 
                 pte_mark_read_only(&pde_addr[j]);
@@ -390,15 +476,19 @@ mark_all_user_pages_cow(pagedir_t pgd)
             }
         }
     }
+    __flush_tlb();
 }
 
 void
 map_unload_user_pages(pagedir_t pgd)
 {
     /* 767 because the stack needs not be unmapped, we reuse it */
-    for (int i = 0; i < 767; i++) {
+    for (int i = 0; i < 768; i++) {
         if (pgd[i] != 0) {
+            uint32_t *pde_addr = (void *) VIRT_BASE + ((pgd[i] >> PDE_ADDR_SHIFT) << 12);
             //printk("unloaded page table 0x%x - 0x%x\n", i * 4 * 1024 * 1024, (i + 1) * 4096 * 1024);
+            //printk("2FREE: 0x%x\n", pde_addr);
+            na_free(0x1000, pde_addr);
             pgd[i] = 0;
         }
     }

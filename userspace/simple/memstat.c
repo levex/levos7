@@ -18,6 +18,7 @@ main(int argc, char *argvp)
         printf("failed to open /proc/memtotal: %s\n", strerror(errno));
         exit(1);
     } else {
+        memset(buffer, 0, 16);
         rc = read(fd, buffer, 16);
         printf("Total RAM: %s bytes\n", buffer);
     }
@@ -27,6 +28,7 @@ main(int argc, char *argvp)
         printf("failed to open /proc/memused: %s\n", strerror(errno));
         exit(1);
     } else {
+        memset(buffer, 0, 16);
         rc = read(fd, buffer, 16);
         printf("Used RAM: %s bytes\n", buffer);
     }
@@ -36,6 +38,7 @@ main(int argc, char *argvp)
         printf("failed to open /proc/memfree: %s\n", strerror(errno));
         exit(1);
     } else {
+        memset(buffer, 0, 16);
         rc = read(fd, buffer, 16);
         printf("Free RAM: %s bytes\n", buffer);
     }
