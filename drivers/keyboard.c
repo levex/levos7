@@ -332,6 +332,10 @@ uint8_t keyboard_to_ascii(uint8_t key)
             }
         }
     }
+
+    if (_ctrl && key >= 'a' && key <= 'z')
+        return __CONTROL(key - 32);
+
 // return the key
 return key;
 }
