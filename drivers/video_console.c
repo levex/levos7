@@ -50,6 +50,30 @@ do_post_print(char c)
 end: return;
 }
 
+static void
+do_cursor(uint32_t col)
+{
+    int cx, cy;
+
+    for (cy = 0; cy < 8; cy ++) {
+        for (cx = 0; cx < 8; cx ++) {
+            __putpix(__vx + (8 - cx), __vy + cy, col);
+        }
+    }
+}
+
+static void
+draw_cursor()
+{
+    do_cursor(0x00333333);
+}
+
+static void
+clear_cursor()
+{
+    do_cursor(0);
+}
+
 void
 videocon_emit(char c)
 {
@@ -125,8 +149,12 @@ videocon_write(struct device *dev, void *_buf, size_t len)
 {
     char *buf = _buf;
 
+    clear_cursor();
+
     for (int i = 0; i < len; i ++)
         videocon_emit(buf[i]);
+
+    draw_cursor();
 
     return len;
 }
