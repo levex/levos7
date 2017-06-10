@@ -24,7 +24,9 @@ n_tty_write_output(struct tty_device *tty, uint8_t byte)
 
     /* if output post processing is not enabled, then pass through */
     if (!(tm->c_oflag & OPOST)) {
-        tty->tty_device->write(tty->tty_device, &byte, 1);
+        //tty->tty_device->write(tty->tty_device, &byte, 1);
+        ring_buffer_write(&tty->tty_out, &byte, 1);
+        //tty->tty_device->tty_interrupt_output(tty->tty_device, tty, 1);
         return 1;
     }
 
@@ -34,12 +36,16 @@ n_tty_write_output(struct tty_device *tty, uint8_t byte)
     if (tm->c_oflag & ONLCR
             && byte == '\n') {
         /* XXX: if this is \n\r, then stuff breaks, why? */
-        tty->tty_device->write(tty->tty_device, "\r", 1);
+        //tty->tty_device->write(tty->tty_device, "\r", 1);
+        ring_buffer_write(&tty->tty_out, "\r", 1);
+        //tty->tty_device->tty_interrupt_output(tty->tty_device, tty, 1);
         return 1;
     }
 
     //printk("wrte!\n");
-    tty->tty_device->write(tty->tty_device, &byte, 1);
+    //tty->tty_device->write(tty->tty_device, &byte, 1);
+    ring_buffer_write(&tty->tty_out, &byte, 1);
+    //tty->tty_device->tty_interrupt_output(tty->tty_device, tty, 1);
     return 1;
 }
 
@@ -51,6 +57,8 @@ n_tty_output(struct tty_device *tty, char *buf, size_t len)
 
     for (i = 0; i < len; i ++)
         nr += n_tty_write_output(tty, buf[i]);
+
+    tty->tty_device->tty_interrupt_output(tty->tty_device, tty, len);
 
     return nr;
 }
@@ -83,6 +91,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
             n_tty_write_output(tty, '@' + tm->c_cc[VINTR]);
             n_tty_write_output(tty, '\n');
         }
+        //printk("SIGINT to pg%d\n", tty->tty_fg_proc);
         send_signal_group(tty->tty_fg_proc, SIGINT);
         return 1;
     }
@@ -180,6 +189,7 @@ n_tty_write_input(struct tty_device *tty, uint8_t byte)
         if (tm->c_lflag & ICANON && tm->c_lflag & ECHO) {
             //tty->tty_device->write(tty->tty_device, &byte, 1);
             n_tty_output(tty, &byte, 1);
+            //tty->tty_device->tty_blit(byte);
         }
         n_tty_push(tty, byte);
         //priv->line_editing[priv->line_len ++] = byte;

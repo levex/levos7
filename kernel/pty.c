@@ -3,91 +3,44 @@
 #include <levos/device.h>
 #include <levos/ring.h>
 
-#if 0
-
-/* write to the pty's buffer from buf (sz. len), passing through the
- * line discipline
- */
-static int
-do_pty_write(struct tty_device *tty, struct pty *pty, void *buf, size_t len)
+/* a master writing should write the input */
+size_t
+pty_master_write(struct pty *pty, char *buf, size_t count)
 {
-    struct tty_line_discipline *ldisc = tty->tty_ldisc;
+    struct tty_device *tty = pty->pty_tty;
+    int i;
 
-    while (len --)
-        ldisc->write_byte(tty, *(uint8_t *)buf++);
+    for (i = 0; i < count; i ++)
+        tty->tty_ldisc->write_input(tty, buf[i]);
 
-    /* XXX: check for errors */
-    return len;
+    return count;
 }
 
-static int
-do_pty_read(struct tty_device *tty, struct pty *pty, void *buf, size_t len)
+size_t
+pty_master_read(struct pty *pty, char *buf, size_t count)
 {
-    /* read from the out buffer of the pty */
-    return ring_buffer_read(&pty->pty_out_rb, buf, len);
+    /* read from the output buffer of the tty */
+    return -EIO;
 }
 
-int
-pty_slave_read(struct device *dev, void *buf, size_t len)
+/* A slave reading should read the processed input */
+size_t
+pty_slave_read(struct pty *pty, char *buf, size_t count)
 {
-    struct pty *pty = dev->priv;
     struct tty_device *tty = pty->pty_tty;
 
-    return do_pty_read(tty, pty, buf, len);
+    return tty->tty_ldisc->read_buf(tty, buf, count);
 }
 
-int
-pty_slave_write(struct device *dev, void *buf, size_t len)
+/* A slave writing should write to the output buffer */
+size_t
+pty_slave_write(struct pty *pty, char *buf, size_t count)
 {
-    struct pty *pty = dev->priv;
     struct tty_device *tty = pty->pty_tty;
+    int i;
 
-    return do_pty_write(tty, pty->pty_other, buf, len);
+    for (i = 0; i < count; i ++)
+        tty->tty_ldisc->write_output(tty, buf[i]);
+    
+    return count;
 }
-
-int
-pty_master_read(struct device *dev, void *buf, size_t len)
-{
-    struct pty *pty = dev->priv;
-    struct tty_device *tty = pty->pty_tty;
-
-    return do_pty_read(tty, pty, buf, len);
-}
-
-int
-pty_master_write(struct device *dev, void *buf, size_t len)
-{
-    struct pty *pty = dev->priv;
-    struct tty_device *tty = pty->pty_tty;
-
-    return do_pty_write(tty, pty->pty_other, buf, len);
-}
-
-int
-pty_side_init(struct tty_device *tty, struct pty *pty, int side)
-{
-    pty->pty_side = side;
-    pty->pty_tty = tty;
-    ring_buffer_init(&pty->pty_out_rb, PTY_BUF_SIZE);
-    ring_buffer_set_flags(&pty->pty_out_rb, RB_FLAG_NONBLOCK);
-}
-
-struct device pty_slave_dev_tmpl = {
-   .read = pty_slave_read,
-   .write = pty_slave_write,
-   .type = DEV_TYPE_CHAR,
-   .pos = 0,
-   .fs = NULL,
-   .priv = NULL,
-};
-
-struct device pty_master_dev_tmpl = {
-   .read = pty_master_read,
-   .write = pty_master_write,
-   .type = DEV_TYPE_CHAR,
-   .pos = 0,
-   .fs = NULL,
-   .priv = NULL,
-};
-
-#endif

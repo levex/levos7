@@ -4,6 +4,7 @@
 #include <levos/types.h>
 
 struct filesystem;
+struct tty_device;
 
 struct device
 {
@@ -18,6 +19,8 @@ struct device
 
     size_t (*read)(struct device *, void *, size_t);
     size_t (*write)(struct device *, void *, size_t);
+
+    int (*tty_interrupt_output)(struct device *, struct tty_device *, int);
 
     unsigned long pos;
 

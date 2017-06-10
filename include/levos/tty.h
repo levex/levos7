@@ -172,13 +172,15 @@ struct winsize {
 #define PTY_SIDE_MASTER 0
 #define PTY_SIDE_SLAVE  1
 
+struct tty_device;
+
 struct pty {
 	int pty_side;
     struct pty *pty_other;
 
     struct ring_buffer pty_out_rb;
 
-	struct tty *pty_tty;
+	struct tty_device *pty_tty;
 };
 
 #define TTY_STATE_UNKNOWN 0
@@ -193,6 +195,9 @@ struct tty_device {
 
 	/* various flags */
 	struct termios tty_termios;
+
+    /* output buffer */
+    struct ring_buffer tty_out;
 
     /* state */
     int tty_state;

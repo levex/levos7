@@ -50,7 +50,7 @@ enum KEYCODE {
     KEY_Z = 'z',
 
     KEY_RETURN = '\n',
-    KEY_ESCAPE = 0x1001,
+    KEY_ESCAPE = 0x1b,
     KEY_BACKSPACE = 0x7f,
 
     // Arrow keys ////////////////////////
@@ -392,6 +392,28 @@ uint8_t parse_keycode(uint8_t code)
     return 0;
 }
 
+int
+__keyboard_inject(char c)
+{
+    if (c) {
+        if (tty_notify)
+            tty_notify->tty_ldisc->write_input(tty_notify, c); 
+        int rc = ring_buffer_write(&kbd_ring, &c, 1);
+        if (rc != 1) {
+            char tmp;
+            ring_buffer_read(&kbd_ring, &tmp, 1);
+            ring_buffer_write(&kbd_ring, &c, 1);
+        }
+    }
+}
+
+int
+keyboard_inject(char *buf, int sz)
+{
+    for (int i = 0; i < sz; i ++)
+        __keyboard_inject(buf[i]);
+}
+
 void
 kbd_irq(struct pt_regs *regs)
 {
@@ -400,16 +422,7 @@ kbd_irq(struct pt_regs *regs)
     char tmp;
 
     //printk("yay (%x): %c,%x\n", '\b', c, c);
-
-    if (c) {
-        if (tty_notify)
-            tty_notify->tty_ldisc->write_input(tty_notify, c); 
-        rc = ring_buffer_write(&kbd_ring, &c, 1);
-        if (rc != 1) {
-            ring_buffer_read(&kbd_ring, &tmp, 1);
-            ring_buffer_write(&kbd_ring, &c, 1);
-        }
-    }
+    __keyboard_inject(c);
 }
 
 void

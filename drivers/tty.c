@@ -52,6 +52,7 @@ tty_new(struct device *dev)
     tty->tty_state = TTY_STATE_UNKNOWN;
     tty->tty_ldisc = &n_tty_ldisc;
     tty->tty_id = tty_get_id();
+    ring_buffer_init(&tty->tty_out, PTY_BUF_SIZE);
     termios_init(&tty->tty_termios);
     tty->tty_winsize.ws_row = 80;
     tty->tty_winsize.ws_col = 25;
@@ -86,6 +87,8 @@ size_t tty_fwrite(struct file *f, void *_buf, size_t len)
 
     for (int i = 0; i < len; i ++)
         n += tty->tty_ldisc->write_output(tty, buf[i]);
+
+    tty->tty_device->tty_interrupt_output(tty->tty_device, tty, len);
 
     return n;
 }
@@ -206,6 +209,8 @@ int ctty_file_write(struct file *f, char *_buf, size_t count)
     if (tty) {
         for (int i = 0; i < count; i ++)
             tty->tty_ldisc->write_output(tty, _buf[i]);
+
+        tty->tty_device->tty_interrupt_output(tty->tty_device, tty, count);
         return count;
     }
 

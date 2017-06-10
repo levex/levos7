@@ -35,3 +35,13 @@ int atoi_10(char *str)
   
     return res;
 }
+
+int atoi_10n(char *str, int n)
+{
+    int res = 0;
+  
+    for (int i = 0; n && str[i] != '\0'; n --, i ++)
+        res = res * 10 + str[i] - '0';
+  
+    return res;
+}

@@ -114,8 +114,8 @@ send_signal_group(pid_t pgid, int signal)
     list_foreach_raw(__ALL_TASKS_PTR, elem) {
         task = list_entry(elem, struct task, all_elem);
         if (task->pid == pgid || task->pgid == pgid) {
-            //printk("sent a %s sig to pgid %d pid %d\n", signal_to_string(signal),
-                    //task->pgid, task->pid);
+            printk("sent a %s sig to pgid %d pid %d\n", signal_to_string(signal),
+                    task->pgid, task->pid);
             __send_signal(task, signal); 
         }
     }
@@ -123,8 +123,8 @@ send_signal_group(pid_t pgid, int signal)
     /* if our PG has been signalled, we need to reschedule to process
      * the signal
      */
-    if (current_task->pgid == pgid)
-        reschedule_to(current_task);
+//    if (current_task->pgid == pgid)
+        //reschedule_to(current_task);
 }
 
 void
