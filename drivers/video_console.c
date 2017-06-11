@@ -276,13 +276,17 @@ do_ansi_cup(char *buf, size_t len)
     int target_x = -1, target_y = -1;
     char *pch, *lasts;
 
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* handle the case where there is no ';' */
     if (strnchr(buf, len, ';') == NULL) {
         target_x = 1;
-        /* this means that the number means the y */
-        target_y = atoi_10n(buf, len);
+        if (len == 0)
+            target_y = 1;
+        else {
+            /* this means that the number means the y */
+            target_y = atoi_10n(buf, len);
+        }
         goto end;
     }
 
