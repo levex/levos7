@@ -14,10 +14,14 @@ static int __vt_bg_color = 0x00000000;
 volatile int __in_ansi = 0;
 static int __save_x = 0, __save_y = 0;
 
+static int __cursor_shown = 0;
+static int show_cursor = 1;
+
 #define ANSI_BOLD (1 << 0)
 static int ansi_flags = 0;
 
 static spinlock_t scroll_lock;
+static spinlock_t cursor_lock;
 
 static inline void __putpix(int x, int y, uint32_t c)
 {
@@ -77,13 +81,24 @@ do_cursor(uint32_t col)
 static void
 draw_cursor()
 {
+    if (!show_cursor)
+        return;
+    spin_lock(&cursor_lock);
     do_cursor(0x00333333);
+    __cursor_shown = 1;
+    spin_unlock(&cursor_lock);
 }
 
 static void
 clear_cursor()
 {
+    if (!show_cursor)
+        return;
+
+    spin_lock(&cursor_lock);
     do_cursor(__vt_bg_color);
+    __cursor_shown = 0;
+    spin_unlock(&cursor_lock);
 }
 
 void
@@ -439,6 +454,18 @@ do_ansi_rcp(char *buf, size_t len)
 }
 
 void
+do_ansi_showcur(char *buf, size_t len)
+{
+    show_cursor = 1;
+}
+
+void
+do_ansi_hidecur(char *buf, size_t len)
+{
+    show_cursor = 0;
+}
+
+void
 do_ansi(char *buf, size_t len)
 {
 #define ANSI_DO(c, name) if (buf[len] == c) { do_ansi_##name (buf, len); return; }
@@ -451,10 +478,14 @@ do_ansi(char *buf, size_t len)
     ANSI_DO('f', cup); /* CUP, but ANSI.SYS version */
     ANSI_DO('G', cha); /* move curson to column N */
     ANSI_DO('H', cup); /* set cursor position */
+    ANSI_DO('h', showcur); /* show cursor */
     ANSI_DO('J', ed);  /* erase display */
+    ANSI_DO('l', hidecur); /* hide cursor */
     ANSI_DO('m', sgr); /* set graphics representation */
     ANSI_DO('s', scp); /* save cursor position */
     ANSI_DO('r', rcp); /* restore cursor position */
+
+    printk("----------> FOUND UNKNOWN ANSI ESCAPE %s\n", buf);
 }
 
 int
@@ -583,13 +614,27 @@ struct device videocon_device = {
     .priv = NULL,
 };
 
+static void
+blink_cursor(void *aux)
+{
+    if (__cursor_shown)
+        clear_cursor();
+    else
+        draw_cursor();
+
+    work_reschedule(50);
+}
+
 int video_console_init()
 {
     bga_set_video(1024, 768, 32, /* LFB */ 1, /* CLEAR */ 1);
     extern struct device *default_user_device;
     default_user_device = &videocon_device;
     __lfb = bga_get_lfb();
+    struct work *blinker = work_create(blink_cursor, NULL);
+    //schedule_work_delay(blinker, 50);
     spin_lock_init(&scroll_lock);
+    spin_lock_init(&cursor_lock);
     mprintk("initialized.\n");
 }
 
