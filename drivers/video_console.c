@@ -3,6 +3,7 @@
 #include <levos/device.h>
 #include <levos/tty.h>
 #include <levos/vga/font.h>
+#include <levos/spinlock.h>
 //#include <levos/bga.h> /* FIXME: convert to fb_device */
 
 #define MODULE_NAME videocon
@@ -11,6 +12,12 @@ static uint32_t *__lfb = 0;
 static int __vx = 0, __vy = 0, __vt_fg_color = 0x00ffffff;
 static int __vt_bg_color = 0x00000000;
 volatile int __in_ansi = 0;
+static int __save_x = 0, __save_y = 0;
+
+#define ANSI_BOLD (1 << 0)
+static int ansi_flags = 0;
+
+static spinlock_t scroll_lock;
 
 static inline void __putpix(int x, int y, uint32_t c)
 {
@@ -21,7 +28,9 @@ static inline void __putpix(int x, int y, uint32_t c)
 static void
 do_scroll()
 {
+    //spin_lock(&scroll_lock);
     memcpy(__lfb, __lfb + (1024 * 1 + 0) * 8, 1024 * 8 * 4 * 95);
+    //spin_unlock(&scroll_lock);
     //memset(__lfb + (1024 * 95 * 4 * 8), 0, 1024 * 8 * 4);
 }
 
@@ -107,11 +116,13 @@ videocon_emit(char c)
         return;
     }
 
+    spin_lock(&scroll_lock);
     for(cy = 0; cy < 8; cy ++){
 		for(cx = 0; cx < 8; cx ++){
 			__putpix(__vx + (8 - cx), __vy + cy, glyph[cy] & mask[cx] ? __vt_fg_color : __vt_bg_color);
 		}
 	}
+    spin_unlock(&scroll_lock);
 
 end:
     do_post_print(c);
@@ -148,42 +159,302 @@ videocon_read(struct device *dev, void *_buf, size_t len)
 }
 
 void
-do_ansi_sgr(char *buf, size_t len)
+__do_ansi_sgr(char *buf, size_t len)
 {
-    int ret = atoi_10n(buf, len);
+    int ret;
+
+    if (len == -1)
+        ret = atoi_10(buf);
+    else
+        ret = atoi_10n(buf, len);
 
     printk("%s (len: %d): %d\n", __func__, len, ret);
 
-#define RGB(r, g, b) (0x00000000 | b | g << 8 | r << 16)
-#define SGR_SET_FG(rt, col) if (ret == (rt)) { __vt_fg_color = (col); return; }
-    SGR_SET_FG(0,  0x00ffffff);
-    SGR_SET_FG(30, RGB(0, 0, 0));
-    SGR_SET_FG(31, RGB(170, 0, 0));
-    SGR_SET_FG(32, RGB(0, 170, 0));
-    SGR_SET_FG(33, RGB(170, 85, 0));
-    SGR_SET_FG(34, RGB(0, 0, 170));
-    SGR_SET_FG(35, RGB(170, 0, 170));
-    SGR_SET_FG(36, RGB(0, 170, 170));
-    SGR_SET_FG(37, RGB(170, 170, 170));
 
-#define SGR_SET_BG(rt, col) if (ret == (rt)) { __vt_bg_color = (col); return; }
-    SGR_SET_BG(40, RGB(0, 0, 0));
-    SGR_SET_BG(41, RGB(170, 0, 0));
-    SGR_SET_BG(42, RGB(0, 170, 0));
-    SGR_SET_BG(43, RGB(170, 85, 0));
-    SGR_SET_BG(44, RGB(0, 0, 170));
-    SGR_SET_BG(45, RGB(170, 0, 170));
-    SGR_SET_BG(46, RGB(0, 170, 170));
-    SGR_SET_BG(47, RGB(170, 170, 170));
+    if (ret == 1) {
+        ansi_flags |= ANSI_BOLD;
+        return;
+    }
+    if (ret == 22) {
+        ansi_flags &= ~ANSI_BOLD;
+        return;
+    }
+
+#define RGB(r, g, b) (0x00000000 | b | g << 8 | r << 16)
+#define SGR_SET_FG(rt, col, col_b) \
+    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_fg_color = (col_b); return; } else \
+            if (ret == (rt)) { __vt_fg_color = (col); return; }
+    SGR_SET_FG(0,  0x00ffffff, 0x00ffffff);
+    SGR_SET_FG(30, RGB(0, 0, 0), RGB(85, 85, 85));
+    SGR_SET_FG(31, RGB(170, 0, 0), RGB(255, 85, 85));
+    SGR_SET_FG(32, RGB(0, 170, 0), RGB(85, 255, 85));
+    SGR_SET_FG(33, RGB(170, 85, 0), RGB(255, 255, 85));
+    SGR_SET_FG(34, RGB(0, 0, 170), RGB(85, 85, 255));
+    SGR_SET_FG(35, RGB(170, 0, 170), RGB(255, 85, 255));
+    SGR_SET_FG(36, RGB(0, 170, 170), RGB(85, 255, 255));
+    SGR_SET_FG(37, RGB(170, 170, 170), RGB(255, 255, 255));
+
+#define SGR_SET_BG(rt, col, col_b) \
+    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_bg_color = (col_b); return; } else \
+            if (ret == (rt)) { __vt_bg_color = (col); return; }
+    SGR_SET_BG(40, RGB(0, 0, 0), RGB(85, 85, 85));
+    SGR_SET_BG(41, RGB(170, 0, 0), RGB(255, 85, 85));
+    SGR_SET_BG(42, RGB(0, 170, 0), RGB(85, 255, 85));
+    SGR_SET_BG(43, RGB(170, 85, 0), RGB(255, 255, 85));
+    SGR_SET_BG(44, RGB(0, 0, 170), RGB(85, 85, 255));
+    SGR_SET_BG(45, RGB(170, 0, 170), RGB(255, 85, 255));
+    SGR_SET_BG(46, RGB(0, 170, 170), RGB(85, 255, 255));
+    SGR_SET_BG(47, RGB(170, 170, 170), RGB(255, 255, 255));
+}
+
+void
+do_ansi_sgr(char *buf, size_t len)
+{
+    char *pch, *lasts;
+
+    /* start splitting the line */
+    if (strchr(buf, ';') == NULL) {
+        __do_ansi_sgr(buf, len);
+        return;
+    }
+
+    pch = strtok_r(buf, ";", &lasts);
+    while (pch != NULL) {
+        __do_ansi_sgr(pch, -1);
+        pch = strtok_r(NULL, ";m", &lasts);
+    }
+}
+
+void
+do_ansi_ed(char *buf, size_t len)
+{
+    int ret;
+
+    if (len == 0) {
+        /* clear from cursor to end of screen */
+        memsetl(__lfb + (__vy * 1024 + __vx), __vt_bg_color, 4 * (1024 - __vy) * (768 - __vx));
+        return;
+    }
+
+    ret = atoi_10n(buf, len);
+
+    if (ret == 0) {
+        /* clear from cursor to end of screen */
+        memsetl(__lfb + (__vy * 1024 + __vx), __vt_bg_color, 4 * (1024 - __vy) * (768 - __vx));
+        return;
+    } else if (ret == 1) {
+        /* clear from cursor to beginning of screen FIXME */
+        memsetl(__lfb, __vt_bg_color, 4 * (__vy * 1024 + __vx));
+        return;
+    } else if (ret == 2) {
+        /* erase the whole display */
+        memsetl(__lfb, __vt_bg_color, 4 * 1024 * 768);
+        __vx = __vy = 0;
+        return;
+    }
+}
+
+void
+do_ansi_cup(char *buf, size_t len)
+{
+    int ret;
+    int target_x = -1, target_y = -1;
+    char *pch, *lasts;
+
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* handle the case where there is no ';' */
+    if (strnchr(buf, len, ';') == NULL) {
+        target_x = 1;
+        /* this means that the number means the y */
+        target_y = atoi_10n(buf, len);
+        goto end;
+    }
+
+    if (buf[0] == ';') {
+        /* no x position given, default to pos 1 */
+        target_x = 1;
+        /* the rest is the Y coordinate */
+        target_y = atoi_10n(buf + 1, len - 1);
+        goto end;
+    } else {
+        /* the sequence contains a ';', and it has both numbers */
+        pch = strtok_r(buf, ";", &lasts);
+        target_x = atoi_10(pch);
+        pch = strtok_r(NULL, ";H", &lasts);
+        if (pch == NULL) {
+            /* the ';' was not found */
+            target_y = 1;
+        } else
+            target_y = atoi_10(pch);
+    }
+
+end:
+    printk("%s: target (%d, %d)\n", __func__, target_x, target_y);
+    __vx = (target_x - 1) * 8;
+    __vy = (target_y - 1) * 8;
+}
+
+void
+do_ansi_cuu(char *buf, size_t len)
+{
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (__vy >= ret * 8)
+        __vy -= ret * 8;
+    else
+        __vy = 0;
+}
+
+void
+do_ansi_cud(char *buf, size_t len)
+{
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (__vy <= 768 - ret * 8)
+        __vy += ret * 8;
+    else
+        __vy = 768 - 8;
+}
+
+void
+do_ansi_cuf(char *buf, size_t len)
+{
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (__vx <= 1024 - ret * 8)
+        __vx += ret * 8;
+    else
+        __vx = 1024 - 8;
+}
+
+void
+do_ansi_cub(char *buf, size_t len)
+{
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (__vx >= ret * 8)
+        __vx -= ret * 8;
+    else
+        __vx = 0;
+}
+
+void
+do_ansi_cnl(char *buf, size_t len)
+{
+    int current_line = __vy / 8;
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (current_line + ret <= 95) {
+        __vy = (current_line + ret) * 8;
+    } else
+        __vy = 768 - 8;
+}
+
+void
+do_ansi_cpl(char *buf, size_t len)
+{
+    int current_line = __vy / 8;
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (current_line - ret >= 0) {
+        __vy = (current_line - ret) * 8;
+    } else
+        __vy = 0;
+}
+
+void
+do_ansi_cha(char *buf, size_t len)
+{
+    int current_line = __vy / 8;
+    int ret;
+    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+
+    /* no argument was supplied, default to 1 */
+    if (len == 0)
+        ret = 1;
+    else
+        ret = atoi_10n(buf, len);
+
+    if (ret >= 0 && ret <= 128) {
+        __vx = ret * 8;
+    } else
+        __vy = 0;
+}
+
+void
+do_ansi_scp(char *buf, size_t len)
+{
+    __save_x = __vx;
+    __save_y = __vy;
+}
+
+void
+do_ansi_rcp(char *buf, size_t len)
+{
+    __vx = __save_x;
+    __vy = __save_y;
 }
 
 void
 do_ansi(char *buf, size_t len)
 {
-    if (buf[len] == 'm') {
-        do_ansi_sgr(buf, len);
-        return;
-    }
+#define ANSI_DO(c, name) if (buf[len] == c) { do_ansi_##name (buf, len); return; }
+    ANSI_DO('A', cuu); /* move cursor up N cells */
+    ANSI_DO('B', cud); /* move cursor down N cells */
+    ANSI_DO('C', cuf); /* move cursor forward N cells */
+    ANSI_DO('D', cub); /* move cursor back N cells */
+    ANSI_DO('E', cnl); /* move cursor N lines down (x = 0) */
+    ANSI_DO('F', cpl); /* move cursor N lines up (x = 0) */
+    ANSI_DO('f', cup); /* CUP, but ANSI.SYS version */
+    ANSI_DO('G', cha); /* move curson to column N */
+    ANSI_DO('H', cup); /* set cursor position */
+    ANSI_DO('J', ed);  /* erase display */
+    ANSI_DO('m', sgr); /* set graphics representation */
+    ANSI_DO('s', scp); /* save cursor position */
+    ANSI_DO('r', rcp); /* restore cursor position */
 }
 
 void
@@ -312,6 +583,7 @@ int video_console_init()
     extern struct device *default_user_device;
     default_user_device = &videocon_device;
     __lfb = bga_get_lfb();
+    spin_lock_init(&scroll_lock);
     mprintk("initialized.\n");
 }
 

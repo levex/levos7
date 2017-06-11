@@ -114,6 +114,23 @@ strchr (const char *string, int c_)
 }
 
 char *
+strnchr (const char *string, size_t len, int c_) 
+{
+  char c = c_;
+  int i;
+
+  for (i = 0; i < len; i++) 
+    if (*string == c)
+      return (char *) string;
+    else if (*string == '\0')
+      return NULL;
+    else
+      string++;
+
+  return NULL;
+}
+
+char *
 strtok_r (char *s, const char *delimiters, char **save_ptr) 
 {
   char *token;
