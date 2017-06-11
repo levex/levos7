@@ -457,7 +457,7 @@ do_ansi(char *buf, size_t len)
     ANSI_DO('r', rcp); /* restore cursor position */
 }
 
-void
+int
 ansi_try_parse(char *buf, size_t len)
 {
     int ansi_state = 0, ansi_size = 0;
@@ -467,27 +467,28 @@ ansi_try_parse(char *buf, size_t len)
     //printk("looking for ANSI... len: %d", len);
 
     if (len < 2)
-        return;
+        return 0;
 
     /* look for the ESC (0x1B) */
     if (ansi_state == 0) {
-        for (i = 0; i < len; i ++) {
+        i = 0;
+        //for (i = 0; i < len; i ++) {
             if (buf[i] == 0x1b) {
                 ansi_state = 1;
                 escape_at = i;
                 printk("ANSI: found ESC at %d\n", escape_at);
                 goto as1;
             }
-        }
+        //}
         /* ESC was not found, no ANSI escape sequence in this segment */
-        return;
+        return 0;
     }
 
 as1:
     if (ansi_state == 1 && escape_at != -1) {
         if (escape_at + 1 > len) {
             /* there are not enough bytes for an ANSI sequence, bail */
-            return;
+            return 0;
         }
         /* check if the next char is the left bracket (0x5b) */
         if (buf[escape_at + 1] == 0x5B) {
@@ -499,7 +500,7 @@ as1:
 
         printk("ANSI: LB was %c (%x) at %d\n", buf[escape_at + 1], buf[escape_at + 1], begin_at);
         /* nope, bail */
-        return;
+        return 0;
     }
 as2:
     if (ansi_state == 2 && begin_at != -1) {
@@ -513,7 +514,7 @@ as2:
                 ansi_buffer[ansi_size + 1] = 0;
                 printk("Found ANSI sequence: \"%s\"\n", ansi_buffer);
                 do_ansi(ansi_buffer, ansi_size);
-                return;
+                return ansi_size;
             }
 
             /* else this byte is part of the ANSI sequence */
@@ -527,7 +528,7 @@ as2:
 
         printk("Abrupt end!\n");
         /* the stream ended before the ANSI sequence ended, thus don't parse */
-        return;
+        return 0;
     }
 }
 
@@ -535,14 +536,19 @@ size_t
 videocon_write(struct device *dev, void *_buf, size_t len)
 {
     char *buf = _buf;
+    int ansis = 0;
 
     clear_cursor();
 
-    /* find ANSI escape sequences */
-    ansi_try_parse(_buf, len);
-
-    for (int i = 0; i < len; i ++)
+    for (int i = 0; i < len; i ++) {
+        /* find ANSI escape sequences */
+        ansis = ansi_try_parse(_buf + i, len - i);
+        if (ansis) {
+            i += ansis + 2;
+            continue;
+        }
         videocon_emit(buf[i]);
+    }
 
     draw_cursor();
 
