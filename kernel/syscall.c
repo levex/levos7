@@ -1197,11 +1197,11 @@ sys_secsleep(int secs)
 
     if (current_task->flags & TFLAG_INTERRUPTED) {
         current_task->flags &= ~TFLAG_INTERRUPTED;
-        printk("oops we got woken up, ret eintr\n");
+        //printk("oops we got woken up, ret eintr\n");
         return -EINTR;
     }
 
-    printk("we have successfully slept enough\n");
+    //printk("we have successfully slept enough\n");
 
     return 0;
 }

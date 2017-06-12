@@ -313,7 +313,7 @@ do_ansi_sgr(char *buf, size_t len)
 {
     char *pch, *lasts;
 
-    printk("%s: len %d \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d \"%s\"\n", __func__, len, buf);
 
     /* start splitting the line */
     if (strchr(buf, ';') == NULL) {
