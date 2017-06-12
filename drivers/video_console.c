@@ -8,6 +8,14 @@
 
 #define MODULE_NAME videocon
 
+#define VT_DISPLAY_WIDTH 1024
+#define VT_DISPLAY_HEIGHT 768
+#define VT_CHAR_SIZE 8
+#define VT_TABSIZE 4
+
+#define VT_WIDTH_CHARS (VT_DISPLAY_WIDTH / VT_CHAR_SIZE)
+#define VT_HEIGHT_CHARS (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)
+
 static uint32_t *__lfb = 0;
 static int __vx = 0, __vy = 0, __vt_fg_color = 0x00ffffff;
 static int __vt_bg_color = 0x00000000;
@@ -23,31 +31,35 @@ static int show_cursor = 1;
 #define ANSI_EXPECT_255_COLOR (1 << 3) /* 255 color mode */
 static int ansi_flags = 0;
 
+char vt_array[(VT_DISPLAY_WIDTH / VT_CHAR_SIZE) * (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)];
+#define PUT_CHAR_VT(c) vt_array[(__vx / VT_CHAR_SIZE) * VT_WIDTH_CHARS + (__vy / VT_CHAR_SIZE)] = c;
+
 static spinlock_t scroll_lock;
 static spinlock_t cursor_lock;
 
 static inline void __putpix(int x, int y, uint32_t c)
 {
     //printk("x: %d, y: %d\n", x, y);
-    __lfb[y * 1024 + x] = c;
+    __lfb[y * VT_DISPLAY_WIDTH + x] = c;
 }
 
 static void
 do_scroll()
 {
     //spin_lock(&scroll_lock);
-    memcpy(__lfb, __lfb + (1024 * 1 + 0) * 8, 1024 * 8 * 4 * 95);
+    mg_memcpy(__lfb,
+              __lfb + (VT_DISPLAY_WIDTH * 1 + 0) * VT_CHAR_SIZE,
+              VT_DISPLAY_WIDTH * VT_CHAR_SIZE * 4 * (VT_HEIGHT_CHARS - 1));
     //spin_unlock(&scroll_lock);
-    //memset(__lfb + (1024 * 95 * 4 * 8), 0, 1024 * 8 * 4);
 }
 
 static void
 do_post_print(char c)
 {
     /* check if we need to scroll */
-    if (__vy >= 768 - 8) {
+    if (__vy >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
         do_scroll();
-        __vy -= 8;
+        __vy -= VT_CHAR_SIZE;
         return;
     }
 
@@ -55,16 +67,16 @@ do_post_print(char c)
     if (c == '\n' || c == '\r')
         goto end;
 
-    if (__vx >= 1024 - 8) {
+    if (__vx >= VT_DISPLAY_WIDTH - VT_CHAR_SIZE) {
         __vx = 0;
-        __vy += 8;
+        __vy += VT_CHAR_SIZE;
         /* check if we need to scroll */
-        if (__vy >= 768 - 8) {
+        if (__vy >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
             do_scroll();
             return;
         }
     } else
-        __vx += 8;
+        __vx += VT_CHAR_SIZE;
 
 end: return;
 }
@@ -74,9 +86,9 @@ do_cursor(uint32_t col)
 {
     int cx, cy;
 
-    for (cy = 0; cy < 8; cy ++) {
-        for (cx = 0; cx < 8; cx ++) {
-            __putpix(__vx + (8 - cx), __vy + cy, col);
+    for (cy = 0; cy < VT_CHAR_SIZE; cy ++) {
+        for (cx = 0; cx < VT_CHAR_SIZE; cx ++) {
+            __putpix(__vx + (VT_CHAR_SIZE - cx), __vy + cy, col);
         }
     }
 }
@@ -118,13 +130,13 @@ videocon_emit(char c)
     //printk("%s: %c (0x%x)\n", __func__, c, c);
 
     if (c == '\t') {
-        for (int i = 0; i < 4; i ++)
+        for (int i = 0; i < VT_TABSIZE; i ++)
             videocon_emit(' ');
         return;
     }
 
     if (c == '\n' || c == '\r') {
-        __vy += 8;
+        __vy += VT_CHAR_SIZE;
         __vx = 0;
         goto end;
     } 
@@ -132,14 +144,18 @@ videocon_emit(char c)
     if (c == '\b') {
         if (__vx == 0)
             return;
-        __vx -= 8;
+        PUT_CHAR_VT(' ');
+        __vx -= VT_CHAR_SIZE;
         return;
     }
 
     spin_lock(&scroll_lock);
-    for(cy = 0; cy < 8; cy ++){
-		for(cx = 0; cx < 8; cx ++){
-			__putpix(__vx + (8 - cx), __vy + cy, glyph[cy] & mask[cx] ? __vt_fg_color : __vt_bg_color);
+    PUT_CHAR_VT(c);
+    for(cy = 0; cy < VT_CHAR_SIZE; cy ++){
+		for(cx = 0; cx < VT_CHAR_SIZE; cx ++){
+			__putpix(__vx + (VT_CHAR_SIZE - cx),
+                     __vy + cy,
+                     glyph[cy] & mask[cx] ? __vt_fg_color : __vt_bg_color);
 		}
 	}
     spin_unlock(&scroll_lock);
@@ -170,12 +186,6 @@ size_t
 videocon_read(struct device *dev, void *_buf, size_t len)
 {
     return 0;
-    char *buf = _buf;
-
-    for (int i = 0; i < len; i ++)
-        buf[i] = videocon_getchar();
-
-    return len;
 }
 
 void
@@ -335,7 +345,9 @@ do_ansi_ed(char *buf, size_t len)
 
     if (len == 0) {
         /* clear from cursor to end of screen */
-        memsetl(__lfb + (__vy * 1024 + __vx), __vt_bg_color, 4 * (1024 - __vy) * (768 - __vx));
+        memsetl(__lfb + (__vy * VT_DISPLAY_WIDTH+ __vx),
+                __vt_bg_color,
+                4 * (VT_DISPLAY_WIDTH - __vy) * (VT_DISPLAY_HEIGHT - __vx));
         return;
     }
 
@@ -343,15 +355,17 @@ do_ansi_ed(char *buf, size_t len)
 
     if (ret == 0) {
         /* clear from cursor to end of screen */
-        memsetl(__lfb + (__vy * 1024 + __vx), __vt_bg_color, 4 * (1024 - __vy) * (768 - __vx));
+        memsetl(__lfb + (__vy * VT_DISPLAY_WIDTH + __vx),
+                __vt_bg_color,
+                4 * (VT_DISPLAY_WIDTH - __vy) * (VT_DISPLAY_HEIGHT - __vx));
         return;
     } else if (ret == 1) {
         /* clear from cursor to beginning of screen FIXME */
-        memsetl(__lfb, __vt_bg_color, 4 * (__vy * 1024 + __vx));
+        memsetl(__lfb, __vt_bg_color, 4 * (__vy * VT_DISPLAY_WIDTH + __vx));
         return;
     } else if (ret == 2) {
         /* erase the whole display */
-        memsetl(__lfb, __vt_bg_color, 4 * 1024 * 768);
+        memsetl(__lfb, __vt_bg_color, 4 * VT_DISPLAY_WIDTH * VT_DISPLAY_HEIGHT);
         __vx = __vy = 0;
         return;
     }
@@ -398,8 +412,8 @@ do_ansi_cup(char *buf, size_t len)
 
 end:
     //printk("%s: target (%d, %d)\n", __func__, target_x, target_y);
-    __vx = (target_x - 1) * 8;
-    __vy = (target_y - 1) * 8;
+    __vx = (target_x - 1) * VT_CHAR_SIZE;
+    __vy = (target_y - 1) * VT_CHAR_SIZE;
 }
 
 void
@@ -414,8 +428,8 @@ do_ansi_cuu(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vy >= ret * 8)
-        __vy -= ret * 8;
+    if (__vy >= ret * VT_CHAR_SIZE)
+        __vy -= ret * VT_CHAR_SIZE;
     else
         __vy = 0;
 }
@@ -432,10 +446,10 @@ do_ansi_cud(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vy <= 768 - ret * 8)
-        __vy += ret * 8;
+    if (__vy <= VT_DISPLAY_HEIGHT - ret * VT_CHAR_SIZE)
+        __vy += ret * VT_CHAR_SIZE;
     else
-        __vy = 768 - 8;
+        __vy = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
 }
 
 void
@@ -450,10 +464,10 @@ do_ansi_cuf(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vx <= 1024 - ret * 8)
-        __vx += ret * 8;
+    if (__vx <= VT_DISPLAY_WIDTH - ret * VT_CHAR_SIZE)
+        __vx += ret * VT_CHAR_SIZE;
     else
-        __vx = 1024 - 8;
+        __vx = VT_DISPLAY_WIDTH - VT_CHAR_SIZE;
 }
 
 void
@@ -468,8 +482,8 @@ do_ansi_cub(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vx >= ret * 8)
-        __vx -= ret * 8;
+    if (__vx >= ret * VT_CHAR_SIZE)
+        __vx -= ret * VT_CHAR_SIZE;
     else
         __vx = 0;
 }
@@ -477,7 +491,7 @@ do_ansi_cub(char *buf, size_t len)
 void
 do_ansi_cnl(char *buf, size_t len)
 {
-    int current_line = __vy / 8;
+    int current_line = __vy / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -487,16 +501,16 @@ do_ansi_cnl(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (current_line + ret <= 95) {
-        __vy = (current_line + ret) * 8;
+    if (current_line + ret <= (VT_HEIGHT_CHARS - 1)) {
+        __vy = (current_line + ret) * VT_CHAR_SIZE;
     } else
-        __vy = 768 - 8;
+        __vy = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
 }
 
 void
 do_ansi_cpl(char *buf, size_t len)
 {
-    int current_line = __vy / 8;
+    int current_line = __vy / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -507,7 +521,7 @@ do_ansi_cpl(char *buf, size_t len)
         ret = atoi_10n(buf, len);
 
     if (current_line - ret >= 0) {
-        __vy = (current_line - ret) * 8;
+        __vy = (current_line - ret) * VT_CHAR_SIZE;
     } else
         __vy = 0;
 }
@@ -515,7 +529,7 @@ do_ansi_cpl(char *buf, size_t len)
 void
 do_ansi_cha(char *buf, size_t len)
 {
-    int current_line = __vy / 8;
+    int current_line = __vy / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -525,8 +539,8 @@ do_ansi_cha(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (ret >= 0 && ret <= 128) {
-        __vx = ret * 8;
+    if (ret >= 0 && ret <= VT_WIDTH_CHARS) {
+        __vx = ret * VT_CHAR_SIZE;
     } else
         __vy = 0;
 }
@@ -724,7 +738,7 @@ blink_cursor(void *aux)
 
 int video_console_init()
 {
-    bga_set_video(1024, 768, 32, /* LFB */ 1, /* CLEAR */ 1);
+    bga_set_video(VT_DISPLAY_WIDTH, VT_DISPLAY_HEIGHT, 32, /* LFB */ 1, /* CLEAR */ 1);
     extern struct device *default_user_device;
     default_user_device = &videocon_device;
     __lfb = bga_get_lfb();
