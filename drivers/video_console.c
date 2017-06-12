@@ -161,7 +161,7 @@ videocon_getchar(void)
 
     kbd_file_read(NULL, &c, 1);
 
-    printk("read: %c\n", c);
+    //printk("read: %c\n", c);
 
     return c;
 }
@@ -208,12 +208,12 @@ __do_ansi_sgr(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    printk("%s %s%s%s (len: %d): (buf[0]: %c) %d\n",
-            __func__,
-            ansi_flags & ANSI_EXPECT_COLOR ? "col " : "",
-            ansi_flags & ANSI_EXPECT_255_COLOR ? "255 " : "",
-            ansi_flags & ANSI_EXPECT_COLOR_FG ? "fg " : "bg ",
-            len, buf[0], ret);
+    //printk("%s %s%s%s (len: %d): (buf[0]: %c) %d\n",
+            //__func__,
+            //ansi_flags & ANSI_EXPECT_COLOR ? "col " : "",
+            //ansi_flags & ANSI_EXPECT_255_COLOR ? "255 " : "",
+            //ansi_flags & ANSI_EXPECT_COLOR_FG ? "fg " : "bg ",
+            //len, buf[0], ret);
 
     if (!(ansi_flags & ANSI_EXPECT_COLOR) && !(ansi_flags & ANSI_EXPECT_255_COLOR)) {
         if (ret == 1) {
