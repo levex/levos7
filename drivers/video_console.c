@@ -17,7 +17,10 @@ static int __save_x = 0, __save_y = 0;
 static int __cursor_shown = 0;
 static int show_cursor = 1;
 
-#define ANSI_BOLD (1 << 0)
+#define ANSI_BOLD             (1 << 0) /* bold colors */
+#define ANSI_EXPECT_COLOR     (1 << 1) /* expecting an SGR color id */
+#define ANSI_EXPECT_COLOR_FG  (1 << 2) /* expectation is for FG (ifset) or BG */
+#define ANSI_EXPECT_255_COLOR (1 << 3) /* 255 color mode */
 static int ansi_flags = 0;
 
 static spinlock_t scroll_lock;
@@ -112,6 +115,8 @@ videocon_emit(char c)
     if (!c)
         return;
 
+    //printk("%s: %c (0x%x)\n", __func__, c, c);
+
     if (c == '\t') {
         for (int i = 0; i < 4; i ++)
             videocon_emit(' ');
@@ -174,6 +179,26 @@ videocon_read(struct device *dev, void *_buf, size_t len)
 }
 
 void
+ansi_set_color(uint32_t *ret, int val)
+{
+    //printk("%s: val %d\n", __func__, val);
+
+#define DEFCOL(col, rr) if (val == col) { *ret = rr; return; }
+    DEFCOL(255, 0x00eeeeee);
+    DEFCOL(0, 0x00000000);
+    DEFCOL(1, 0x00800000);
+    DEFCOL(2, 0x00008000);
+    DEFCOL(3, 0x00808000);
+    DEFCOL(4, 0x00000080);
+    DEFCOL(5, 0x00800080);
+    DEFCOL(6, 0x00008080);
+    DEFCOL(7, 0x00c0c0c0);
+    DEFCOL(8, 0x00808080);
+
+    printk("%s: unknown color %d\n", __func__, val);
+}
+
+void
 __do_ansi_sgr(char *buf, size_t len)
 {
     int ret;
@@ -183,15 +208,68 @@ __do_ansi_sgr(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    printk("%s (len: %d): %d\n", __func__, len, ret);
+    printk("%s %s%s%s (len: %d): (buf[0]: %c) %d\n",
+            __func__,
+            ansi_flags & ANSI_EXPECT_COLOR ? "col " : "",
+            ansi_flags & ANSI_EXPECT_255_COLOR ? "255 " : "",
+            ansi_flags & ANSI_EXPECT_COLOR_FG ? "fg " : "bg ",
+            len, buf[0], ret);
 
+    if (!(ansi_flags & ANSI_EXPECT_COLOR) && !(ansi_flags & ANSI_EXPECT_255_COLOR)) {
+        if (ret == 1) {
+            ansi_flags |= ANSI_BOLD;
+            return;
+        }
+        if (ret == 22) {
+            ansi_flags &= ~ANSI_BOLD;
+            return;
+        }
 
-    if (ret == 1) {
-        ansi_flags |= ANSI_BOLD;
+        if (ret == 38) {
+            ansi_flags |= ANSI_EXPECT_COLOR;
+            ansi_flags |= ANSI_EXPECT_COLOR_FG;
+            return;
+        }
+
+        if (ret == 48) {
+            ansi_flags |= ANSI_EXPECT_COLOR;
+            ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+            return;
+        }
+    }
+
+    if (ansi_flags & ANSI_EXPECT_COLOR) {
+        if (ret == 5) {
+            /* 255 color mode */
+            ansi_flags |= ANSI_EXPECT_255_COLOR;
+            ansi_flags &= ~ANSI_EXPECT_COLOR;
+            return;
+        } else if (ret == 2) {
+            /* r;g;b mode TODO */
+            printk("requested RGB mode, we do not yet support\n");
+            ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+            ansi_flags &= ~ANSI_EXPECT_COLOR;
+            ansi_flags &= ~ANSI_EXPECT_255_COLOR;
+            return;
+        }
+
+        printk("invalid 38 expectation\n");
+
         return;
     }
-    if (ret == 22) {
-        ansi_flags &= ~ANSI_BOLD;
+
+    if (ansi_flags & ANSI_EXPECT_255_COLOR) {
+        /* this value is the 255 color value */
+        if (ansi_flags & ANSI_EXPECT_COLOR_FG) {
+            /* for foreground */
+            ansi_set_color(&__vt_fg_color, ret);
+        } else {
+            /* for background */
+            ansi_set_color(&__vt_bg_color, ret);
+        }
+        ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+        ansi_flags &= ~ANSI_EXPECT_COLOR;
+        ansi_flags &= ~ANSI_EXPECT_255_COLOR;
         return;
     }
 
@@ -199,7 +277,16 @@ __do_ansi_sgr(char *buf, size_t len)
 #define SGR_SET_FG(rt, col, col_b) \
     if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_fg_color = (col_b); return; } else \
             if (ret == (rt)) { __vt_fg_color = (col); return; }
-    SGR_SET_FG(0,  0x00ffffff, 0x00ffffff);
+#define SGR_SET_BG(rt, col, col_b) \
+    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_bg_color = (col_b); return; } else \
+            if (ret == (rt)) { __vt_bg_color = (col); return; }
+
+    if (ret == 0) {
+        __vt_fg_color = RGB(0xff, 0xff, 0xff);
+        __vt_bg_color = RGB(0, 0, 0);
+        return;
+    }
+
     SGR_SET_FG(30, RGB(0, 0, 0), RGB(85, 85, 85));
     SGR_SET_FG(31, RGB(170, 0, 0), RGB(255, 85, 85));
     SGR_SET_FG(32, RGB(0, 170, 0), RGB(85, 255, 85));
@@ -209,9 +296,6 @@ __do_ansi_sgr(char *buf, size_t len)
     SGR_SET_FG(36, RGB(0, 170, 170), RGB(85, 255, 255));
     SGR_SET_FG(37, RGB(170, 170, 170), RGB(255, 255, 255));
 
-#define SGR_SET_BG(rt, col, col_b) \
-    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_bg_color = (col_b); return; } else \
-            if (ret == (rt)) { __vt_bg_color = (col); return; }
     SGR_SET_BG(40, RGB(0, 0, 0), RGB(85, 85, 85));
     SGR_SET_BG(41, RGB(170, 0, 0), RGB(255, 85, 85));
     SGR_SET_BG(42, RGB(0, 170, 0), RGB(85, 255, 85));
@@ -220,12 +304,16 @@ __do_ansi_sgr(char *buf, size_t len)
     SGR_SET_BG(45, RGB(170, 0, 170), RGB(255, 85, 255));
     SGR_SET_BG(46, RGB(0, 170, 170), RGB(85, 255, 255));
     SGR_SET_BG(47, RGB(170, 170, 170), RGB(255, 255, 255));
+
+    printk("%s: unhandled SGR %d\n", __func__, ret);
 }
 
 void
 do_ansi_sgr(char *buf, size_t len)
 {
     char *pch, *lasts;
+
+    printk("%s: len %d \"%s\"\n", __func__, len, buf);
 
     /* start splitting the line */
     if (strchr(buf, ';') == NULL) {
@@ -309,7 +397,7 @@ do_ansi_cup(char *buf, size_t len)
     }
 
 end:
-    printk("%s: target (%d, %d)\n", __func__, target_x, target_y);
+    //printk("%s: target (%d, %d)\n", __func__, target_x, target_y);
     __vx = (target_x - 1) * 8;
     __vy = (target_y - 1) * 8;
 }
@@ -318,7 +406,7 @@ void
 do_ansi_cuu(char *buf, size_t len)
 {
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -336,7 +424,7 @@ void
 do_ansi_cud(char *buf, size_t len)
 {
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -354,7 +442,7 @@ void
 do_ansi_cuf(char *buf, size_t len)
 {
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -372,7 +460,7 @@ void
 do_ansi_cub(char *buf, size_t len)
 {
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -391,7 +479,7 @@ do_ansi_cnl(char *buf, size_t len)
 {
     int current_line = __vy / 8;
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -410,7 +498,7 @@ do_ansi_cpl(char *buf, size_t len)
 {
     int current_line = __vy / 8;
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -429,7 +517,7 @@ do_ansi_cha(char *buf, size_t len)
 {
     int current_line = __vy / 8;
     int ret;
-    printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
+    //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
     /* no argument was supplied, default to 1 */
     if (len == 0)
@@ -493,11 +581,13 @@ do_ansi(char *buf, size_t len)
 }
 
 int
-ansi_try_parse(char *buf, size_t len)
+ansi_try_parse(int *isansi, char *buf, size_t len)
 {
     int ansi_state = 0, ansi_size = 0;
     int i, escape_at = -1, begin_at = -1;
-    char ansi_buffer[16];
+    char ansi_buffer[64];
+
+    *isansi = 0;
 
     //printk("looking for ANSI... len: %d", len);
 
@@ -511,7 +601,7 @@ ansi_try_parse(char *buf, size_t len)
             if (buf[i] == 0x1b) {
                 ansi_state = 1;
                 escape_at = i;
-                printk("ANSI: found ESC at %d\n", escape_at);
+                //printk("ANSI: found ESC at %d\n", escape_at);
                 goto as1;
             }
         //}
@@ -529,11 +619,11 @@ as1:
         if (buf[escape_at + 1] == 0x5B) {
             ansi_state = 2;
             begin_at = escape_at + 1;
-            printk("ANSI: found LB at %d\n", begin_at);
+            //printk("ANSI: found LB at %d\n", begin_at);
             goto as2;
         }
 
-        printk("ANSI: LB was %c (%x) at %d\n", buf[escape_at + 1], buf[escape_at + 1], begin_at);
+        //printk("ANSI: LB was %c (%x) at %d\n", buf[escape_at + 1], buf[escape_at + 1], begin_at);
         /* nope, bail */
         return 0;
     }
@@ -541,27 +631,28 @@ as2:
     if (ansi_state == 2 && begin_at != -1) {
         /* we are in an ANSI sequence, start fetching the bytes */
         while (begin_at + 1 + ansi_size < len) {
-            printk("parsing ANSI remainder...\n");
+            //printk("parsing ANSI remainder...\n");
             char this = buf[begin_at + 1 + ansi_size];
             if (0x40 <= this && this <= 0x7e) {
                 /* found the end of the ANSI sequence */
                 ansi_buffer[ansi_size] = this;
                 ansi_buffer[ansi_size + 1] = 0;
-                printk("Found ANSI sequence: \"%s\"\n", ansi_buffer);
+                //printk("Found ANSI sequence: \"%s\"\n", ansi_buffer);
                 do_ansi(ansi_buffer, ansi_size);
+                *isansi = 1;
                 return ansi_size;
             }
 
             /* else this byte is part of the ANSI sequence */
             ansi_buffer[ansi_size] = this;
 
-            printk("ANSI: added %c (%x) to size %d\n", this, this, ansi_size);
+            //printk("ANSI: added %c (%x) to size %d\n", this, this, ansi_size);
 
             /* proceed to the next byte */
             ansi_size ++;
         }
 
-        printk("Abrupt end!\n");
+        //printk("Abrupt end!\n");
         /* the stream ended before the ANSI sequence ended, thus don't parse */
         return 0;
     }
@@ -572,17 +663,19 @@ videocon_write(struct device *dev, void *_buf, size_t len)
 {
     char *buf = _buf;
     int ansis = 0;
+    int isansi = 0;
 
     clear_cursor();
 
-    for (int i = 0; i < len; i ++) {
+    for (int i = 0; i < len;) {
         /* find ANSI escape sequences */
-        ansis = ansi_try_parse(_buf + i, len - i);
-        if (ansis) {
-            i += ansis + 2;
+        ansis = ansi_try_parse(&isansi, _buf + i, len - i);
+        if (isansi) {
+            i += ansis + 3;
             continue;
         }
         videocon_emit(buf[i]);
+        i ++;
     }
 
     draw_cursor();
