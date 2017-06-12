@@ -38,6 +38,31 @@ memcpy (void *dst_, const void *src_, size_t size)
   return dst_;
 }
 
+void *
+memcpyl(uint32_t *dst_, uint32_t *src_, size_t size)
+{
+  uint32_t *dst = dst_;
+  const uint32_t *src = src_;
+
+  while (size -- > 0)
+    *dst++ = *src++;
+
+  return dst_;
+}
+
+void *
+mg_memcpy(void *restrict dst, const void *restrict src, size_t n)
+{
+  n /= 4;
+  asm (
+    "rep movsd"
+    : /* no output */
+    : "D" (dst), "S" (src), "c" (n)
+    : /* no clobbering */
+    );
+  return dst;
+}
+
 size_t
 strlen (const char *string) 
 {

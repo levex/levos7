@@ -35,7 +35,7 @@ include arch/$(ARCH)/Makefile
 LEVOS_CONFIG_DEFS=$(shell ./gen_config_line.py < $(LEVOS_CONFIG_FILE))
 
 CFLAGS += -Iinclude -D__LEVOS_ARCH_$(ARCH)__ $(LEVOS_CONFIG_DEFS) -fno-omit-frame-pointer
-CFLAGS += -g
+CFLAGS += -g -msse2
 
 %.o: %.c
 	@echo "  CC       $@"

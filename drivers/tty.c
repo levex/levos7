@@ -150,7 +150,12 @@ int tty_ioctl(struct tty_device *tty, unsigned long req, unsigned long arg)
         //printk("tty: fg pgid %d\n", *tg);
         tty->tty_fg_proc = *tg;
         return 0;
+    } else if (req == TCFLSH) {
+        /* FIXME */
+        return 0;
     }
+
+    return -EINVAL;
 }
 
 int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
