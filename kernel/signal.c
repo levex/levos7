@@ -44,9 +44,23 @@ do_fatal_signal(struct task *task, int signal)
     return;
 }
 
+sighandler_t
+signal_get_disp(struct task *task, int signum)
+{
+    struct signal_struct *sig = &task->signal;
+
+    return sig->signal_handlers[signum];
+}
+
 void
 __send_signal(struct task *task, int signal)
 {
+    /* pid 1 only accepts signals it has explicit handlers for */
+    if (task->pid == 1 &&
+            (signal_get_disp(task, signal) == SIG_IGN ||
+             signal_get_disp(task, signal) == SIG_DFL))
+        return;
+
     //printk("%s: to %d from %d, sig: %s\n", __func__, task->pid, current_task->pid, signal_to_string(signal));
     struct signal *sig = malloc(sizeof(*sig));
     if (!sig) {
@@ -206,13 +220,6 @@ signal_register_handler(struct task *task, int signum, sighandler_t handler)
     sig->signal_handlers[signum] = handler;
 }
 
-sighandler_t
-signal_get_disp(struct task *task, int signum)
-{
-    struct signal_struct *sig = &task->signal;
-
-    return sig->signal_handlers[signum];
-}
 
 void
 ret_from_signal(void)
