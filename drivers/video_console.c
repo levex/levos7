@@ -13,14 +13,29 @@
 #define VT_CHAR_SIZE 8
 #define VT_TABSIZE 4
 
+struct vconsole {
+    int vc_px; /* pixel X */
+    int vc_py; /* pixel Y */
+    int vc_spx; /* saved pixel X */
+    int vc_spy; /* saved pixel Y */
+    uint32_t vc_fg_col; /* foreground color */
+    uint32_t vc_bg_col; /* background color */
+};
+
+struct vconsole __vc_0 = {
+    .vc_px = 0,
+    .vc_py = 0,
+    .vc_spx = 0,
+    .vc_spy = 0,
+    .vc_fg_col = 0x00ffffff,
+    .vc_bg_col = 0x00000000,
+};
+
 #define VT_WIDTH_CHARS (VT_DISPLAY_WIDTH / VT_CHAR_SIZE)
 #define VT_HEIGHT_CHARS (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)
 
 static uint32_t *__lfb = 0;
-static int __vx = 0, __vy = 0, __vt_fg_color = 0x00ffffff;
-static int __vt_bg_color = 0x00000000;
 volatile int __in_ansi = 0;
-static int __save_x = 0, __save_y = 0;
 
 static int __cursor_shown = 0;
 static int show_cursor = 1;
@@ -32,7 +47,9 @@ static int show_cursor = 1;
 static int ansi_flags = 0;
 
 char vt_array[(VT_DISPLAY_WIDTH / VT_CHAR_SIZE) * (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)];
-#define PUT_CHAR_VT(c) vt_array[(__vx / VT_CHAR_SIZE) * VT_WIDTH_CHARS + (__vy / VT_CHAR_SIZE)] = c;
+#define PUT_CHAR_VT(vc, c) \
+    vt_array[(vc->vc_px / VT_CHAR_SIZE) * VT_WIDTH_CHARS + \
+            (vc->vc_py / VT_CHAR_SIZE)] = c;
 
 static spinlock_t scroll_lock;
 static spinlock_t cursor_lock;
@@ -54,12 +71,12 @@ do_scroll()
 }
 
 static void
-do_post_print(char c)
+do_post_print(struct vconsole *vc, char c)
 {
     /* check if we need to scroll */
-    if (__vy >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
+    if (vc->vc_py >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
         do_scroll();
-        __vy -= VT_CHAR_SIZE;
+        vc->vc_py -= VT_CHAR_SIZE;
         return;
     }
 
@@ -67,57 +84,57 @@ do_post_print(char c)
     if (c == '\n' || c == '\r')
         goto end;
 
-    if (__vx >= VT_DISPLAY_WIDTH - VT_CHAR_SIZE) {
-        __vx = 0;
-        __vy += VT_CHAR_SIZE;
+    if (vc->vc_px >= VT_DISPLAY_WIDTH - VT_CHAR_SIZE) {
+        vc->vc_px = 0;
+        vc->vc_py += VT_CHAR_SIZE;
         /* check if we need to scroll */
-        if (__vy >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
+        if (vc->vc_py >= VT_DISPLAY_HEIGHT - VT_CHAR_SIZE) {
             do_scroll();
             return;
         }
     } else
-        __vx += VT_CHAR_SIZE;
+        vc->vc_px += VT_CHAR_SIZE;
 
 end: return;
 }
 
 static void
-do_cursor(uint32_t col)
+do_cursor(struct vconsole *vc, uint32_t col)
 {
     int cx, cy;
 
     for (cy = 0; cy < VT_CHAR_SIZE; cy ++) {
         for (cx = 0; cx < VT_CHAR_SIZE; cx ++) {
-            __putpix(__vx + (VT_CHAR_SIZE - cx), __vy + cy, col);
+            __putpix(vc->vc_px + (VT_CHAR_SIZE - cx), vc->vc_py + cy, col);
         }
     }
 }
 
 static void
-draw_cursor()
+draw_cursor(struct vconsole *vc)
 {
     if (!show_cursor)
         return;
     spin_lock(&cursor_lock);
-    do_cursor(0x00333333);
+    do_cursor(vc, 0x00333333);
     __cursor_shown = 1;
     spin_unlock(&cursor_lock);
 }
 
 static void
-clear_cursor()
+clear_cursor(struct vconsole *vc)
 {
     if (!show_cursor)
         return;
 
     spin_lock(&cursor_lock);
-    do_cursor(__vt_bg_color);
+    do_cursor(vc, vc->vc_bg_col);
     __cursor_shown = 0;
     spin_unlock(&cursor_lock);
 }
 
 void
-videocon_emit(char c)
+videocon_emit(struct vconsole *vc, char c)
 {
     int cx, cy;
     unsigned char *glyph = g_8x8_font + (int)(c * 8);
@@ -131,43 +148,43 @@ videocon_emit(char c)
 
     if (c == '\t') {
         for (int i = 0; i < VT_TABSIZE; i ++)
-            videocon_emit(' ');
+            videocon_emit(vc, ' ');
         return;
     }
 
     if (c == '\n' || c == '\r') {
-        __vy += VT_CHAR_SIZE;
-        __vx = 0;
+        vc->vc_py += VT_CHAR_SIZE;
+        vc->vc_px = 0;
         goto end;
     } 
 
     if (c == '\b') {
-        if (__vx == 0)
+        if (vc->vc_px == 0)
             return;
-        PUT_CHAR_VT(' ');
-        __vx -= VT_CHAR_SIZE;
+        PUT_CHAR_VT(vc, ' ');
+        vc->vc_px -= VT_CHAR_SIZE;
         return;
     }
 
     spin_lock(&scroll_lock);
-    PUT_CHAR_VT(c);
+    PUT_CHAR_VT(vc, c);
     for(cy = 0; cy < VT_CHAR_SIZE; cy ++){
 		for(cx = 0; cx < VT_CHAR_SIZE; cx ++){
-			__putpix(__vx + (VT_CHAR_SIZE - cx),
-                     __vy + cy,
-                     glyph[cy] & mask[cx] ? __vt_fg_color : __vt_bg_color);
+			__putpix(vc->vc_px + (VT_CHAR_SIZE - cx),
+                     vc->vc_py + cy,
+                     glyph[cy] & mask[cx] ? vc->vc_fg_col : vc->vc_bg_col);
 		}
 	}
     spin_unlock(&scroll_lock);
 
 end:
-    do_post_print(c);
+    do_post_print(vc, c);
 }
 
-void videocon_puts(char *s)
+void videocon_puts(struct vconsole *vc, char *s)
 {
     while (*s)
-        videocon_emit(*s++);
+        videocon_emit(vc, *s++);
 }
 
 char
@@ -209,7 +226,7 @@ ansi_set_color(uint32_t *ret, int val)
 }
 
 void
-__do_ansi_sgr(char *buf, size_t len)
+__do_ansi_sgr(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
 
@@ -272,10 +289,10 @@ __do_ansi_sgr(char *buf, size_t len)
         /* this value is the 255 color value */
         if (ansi_flags & ANSI_EXPECT_COLOR_FG) {
             /* for foreground */
-            ansi_set_color(&__vt_fg_color, ret);
+            ansi_set_color(&vc->vc_fg_col, ret);
         } else {
             /* for background */
-            ansi_set_color(&__vt_bg_color, ret);
+            ansi_set_color(&vc->vc_bg_col, ret);
         }
         ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
         ansi_flags &= ~ANSI_EXPECT_COLOR;
@@ -285,15 +302,15 @@ __do_ansi_sgr(char *buf, size_t len)
 
 #define RGB(r, g, b) (0x00000000 | b | g << 8 | r << 16)
 #define SGR_SET_FG(rt, col, col_b) \
-    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_fg_color = (col_b); return; } else \
-            if (ret == (rt)) { __vt_fg_color = (col); return; }
+    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { vc->vc_fg_col = (col_b); return; } else \
+            if (ret == (rt)) { vc->vc_fg_col = (col); return; }
 #define SGR_SET_BG(rt, col, col_b) \
-    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { __vt_bg_color = (col_b); return; } else \
-            if (ret == (rt)) { __vt_bg_color = (col); return; }
+    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { vc->vc_bg_col = (col_b); return; } else \
+            if (ret == (rt)) { vc->vc_bg_col = (col); return; }
 
     if (ret == 0) {
-        __vt_fg_color = RGB(0xff, 0xff, 0xff);
-        __vt_bg_color = RGB(0, 0, 0);
+        vc->vc_fg_col = RGB(0xff, 0xff, 0xff);
+        vc->vc_bg_col = RGB(0, 0, 0);
         return;
     }
 
@@ -319,7 +336,7 @@ __do_ansi_sgr(char *buf, size_t len)
 }
 
 void
-do_ansi_sgr(char *buf, size_t len)
+do_ansi_sgr(struct vconsole *vc, char *buf, size_t len)
 {
     char *pch, *lasts;
 
@@ -327,27 +344,27 @@ do_ansi_sgr(char *buf, size_t len)
 
     /* start splitting the line */
     if (strchr(buf, ';') == NULL) {
-        __do_ansi_sgr(buf, len);
+        __do_ansi_sgr(vc, buf, len);
         return;
     }
 
     pch = strtok_r(buf, ";", &lasts);
     while (pch != NULL) {
-        __do_ansi_sgr(pch, -1);
+        __do_ansi_sgr(vc, pch, -1);
         pch = strtok_r(NULL, ";m", &lasts);
     }
 }
 
 void
-do_ansi_ed(char *buf, size_t len)
+do_ansi_ed(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
 
     if (len == 0) {
         /* clear from cursor to end of screen */
-        memsetl(__lfb + (__vy * VT_DISPLAY_WIDTH+ __vx),
-                __vt_bg_color,
-                4 * (VT_DISPLAY_WIDTH - __vy) * (VT_DISPLAY_HEIGHT - __vx));
+        memsetl(__lfb + (vc->vc_py * VT_DISPLAY_WIDTH+ vc->vc_px),
+                vc->vc_bg_col,
+                4 * (VT_DISPLAY_WIDTH - vc->vc_py) * (VT_DISPLAY_HEIGHT - vc->vc_px));
         return;
     }
 
@@ -355,24 +372,24 @@ do_ansi_ed(char *buf, size_t len)
 
     if (ret == 0) {
         /* clear from cursor to end of screen */
-        memsetl(__lfb + (__vy * VT_DISPLAY_WIDTH + __vx),
-                __vt_bg_color,
-                4 * (VT_DISPLAY_WIDTH - __vy) * (VT_DISPLAY_HEIGHT - __vx));
+        memsetl(__lfb + (vc->vc_py * VT_DISPLAY_WIDTH + vc->vc_px),
+                vc->vc_bg_col,
+                4 * (VT_DISPLAY_WIDTH - vc->vc_py) * (VT_DISPLAY_HEIGHT - vc->vc_px));
         return;
     } else if (ret == 1) {
         /* clear from cursor to beginning of screen FIXME */
-        memsetl(__lfb, __vt_bg_color, 4 * (__vy * VT_DISPLAY_WIDTH + __vx));
+        memsetl(__lfb, vc->vc_bg_col, 4 * (vc->vc_py * VT_DISPLAY_WIDTH + vc->vc_px));
         return;
     } else if (ret == 2) {
         /* erase the whole display */
-        memsetl(__lfb, __vt_bg_color, 4 * VT_DISPLAY_WIDTH * VT_DISPLAY_HEIGHT);
-        __vx = __vy = 0;
+        memsetl(__lfb, vc->vc_bg_col, 4 * VT_DISPLAY_WIDTH * VT_DISPLAY_HEIGHT);
+        vc->vc_px = vc->vc_py = 0;
         return;
     }
 }
 
 void
-do_ansi_cup(char *buf, size_t len)
+do_ansi_cup(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
     int target_x = -1, target_y = -1;
@@ -412,12 +429,12 @@ do_ansi_cup(char *buf, size_t len)
 
 end:
     //printk("%s: target (%d, %d)\n", __func__, target_x, target_y);
-    __vx = (target_x - 1) * VT_CHAR_SIZE;
-    __vy = (target_y - 1) * VT_CHAR_SIZE;
+    vc->vc_px = (target_x - 1) * VT_CHAR_SIZE;
+    vc->vc_py = (target_y - 1) * VT_CHAR_SIZE;
 }
 
 void
-do_ansi_cuu(char *buf, size_t len)
+do_ansi_cuu(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
@@ -428,14 +445,14 @@ do_ansi_cuu(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vy >= ret * VT_CHAR_SIZE)
-        __vy -= ret * VT_CHAR_SIZE;
+    if (vc->vc_py >= ret * VT_CHAR_SIZE)
+        vc->vc_py -= ret * VT_CHAR_SIZE;
     else
-        __vy = 0;
+        vc->vc_py = 0;
 }
 
 void
-do_ansi_cud(char *buf, size_t len)
+do_ansi_cud(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
@@ -446,14 +463,14 @@ do_ansi_cud(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vy <= VT_DISPLAY_HEIGHT - ret * VT_CHAR_SIZE)
-        __vy += ret * VT_CHAR_SIZE;
+    if (vc->vc_py <= VT_DISPLAY_HEIGHT - ret * VT_CHAR_SIZE)
+        vc->vc_py += ret * VT_CHAR_SIZE;
     else
-        __vy = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
+        vc->vc_py = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
 }
 
 void
-do_ansi_cuf(char *buf, size_t len)
+do_ansi_cuf(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
@@ -464,14 +481,14 @@ do_ansi_cuf(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vx <= VT_DISPLAY_WIDTH - ret * VT_CHAR_SIZE)
-        __vx += ret * VT_CHAR_SIZE;
+    if (vc->vc_px <= VT_DISPLAY_WIDTH - ret * VT_CHAR_SIZE)
+        vc->vc_px += ret * VT_CHAR_SIZE;
     else
-        __vx = VT_DISPLAY_WIDTH - VT_CHAR_SIZE;
+        vc->vc_px = VT_DISPLAY_WIDTH - VT_CHAR_SIZE;
 }
 
 void
-do_ansi_cub(char *buf, size_t len)
+do_ansi_cub(struct vconsole *vc, char *buf, size_t len)
 {
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
@@ -482,16 +499,16 @@ do_ansi_cub(char *buf, size_t len)
     else
         ret = atoi_10n(buf, len);
 
-    if (__vx >= ret * VT_CHAR_SIZE)
-        __vx -= ret * VT_CHAR_SIZE;
+    if (vc->vc_px >= ret * VT_CHAR_SIZE)
+        vc->vc_px -= ret * VT_CHAR_SIZE;
     else
-        __vx = 0;
+        vc->vc_px = 0;
 }
 
 void
-do_ansi_cnl(char *buf, size_t len)
+do_ansi_cnl(struct vconsole *vc, char *buf, size_t len)
 {
-    int current_line = __vy / VT_CHAR_SIZE;
+    int current_line = vc->vc_py / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -502,15 +519,15 @@ do_ansi_cnl(char *buf, size_t len)
         ret = atoi_10n(buf, len);
 
     if (current_line + ret <= (VT_HEIGHT_CHARS - 1)) {
-        __vy = (current_line + ret) * VT_CHAR_SIZE;
+        vc->vc_py = (current_line + ret) * VT_CHAR_SIZE;
     } else
-        __vy = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
+        vc->vc_py = VT_DISPLAY_HEIGHT - VT_CHAR_SIZE;
 }
 
 void
-do_ansi_cpl(char *buf, size_t len)
+do_ansi_cpl(struct vconsole *vc, char *buf, size_t len)
 {
-    int current_line = __vy / VT_CHAR_SIZE;
+    int current_line = vc->vc_py / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -521,15 +538,15 @@ do_ansi_cpl(char *buf, size_t len)
         ret = atoi_10n(buf, len);
 
     if (current_line - ret >= 0) {
-        __vy = (current_line - ret) * VT_CHAR_SIZE;
+        vc->vc_py = (current_line - ret) * VT_CHAR_SIZE;
     } else
-        __vy = 0;
+        vc->vc_py = 0;
 }
 
 void
-do_ansi_cha(char *buf, size_t len)
+do_ansi_cha(struct vconsole *vc, char *buf, size_t len)
 {
-    int current_line = __vy / VT_CHAR_SIZE;
+    int current_line = vc->vc_py / VT_CHAR_SIZE;
     int ret;
     //printk("%s: len %d buf \"%s\"\n", __func__, len, buf);
 
@@ -540,41 +557,41 @@ do_ansi_cha(char *buf, size_t len)
         ret = atoi_10n(buf, len);
 
     if (ret >= 0 && ret <= VT_WIDTH_CHARS) {
-        __vx = ret * VT_CHAR_SIZE;
+        vc->vc_px = ret * VT_CHAR_SIZE;
     } else
-        __vy = 0;
+        vc->vc_py = 0;
 }
 
 void
-do_ansi_scp(char *buf, size_t len)
+do_ansi_scp(struct vconsole *vc, char *buf, size_t len)
 {
-    __save_x = __vx;
-    __save_y = __vy;
+    vc->vc_spx = vc->vc_px;
+    vc->vc_spy = vc->vc_py;
 }
 
 void
-do_ansi_rcp(char *buf, size_t len)
+do_ansi_rcp(struct vconsole *vc, char *buf, size_t len)
 {
-    __vx = __save_x;
-    __vy = __save_y;
+    vc->vc_px = vc->vc_spx;
+    vc->vc_py = vc->vc_spy;
 }
 
 void
-do_ansi_showcur(char *buf, size_t len)
+do_ansi_showcur(struct vconsole *vc, char *buf, size_t len)
 {
     show_cursor = 1;
 }
 
 void
-do_ansi_hidecur(char *buf, size_t len)
+do_ansi_hidecur(struct vconsole *vc, char *buf, size_t len)
 {
     show_cursor = 0;
 }
 
 void
-do_ansi(char *buf, size_t len)
+do_ansi(struct vconsole *vc, char *buf, size_t len)
 {
-#define ANSI_DO(c, name) if (buf[len] == c) { do_ansi_##name (buf, len); return; }
+#define ANSI_DO(c, name) if (buf[len] == c) { do_ansi_##name (vc, buf, len); return; }
     ANSI_DO('A', cuu); /* move cursor up N cells */
     ANSI_DO('B', cud); /* move cursor down N cells */
     ANSI_DO('C', cuf); /* move cursor forward N cells */
@@ -595,7 +612,7 @@ do_ansi(char *buf, size_t len)
 }
 
 int
-ansi_try_parse(int *isansi, char *buf, size_t len)
+ansi_try_parse(struct vconsole *vc, int *isansi, char *buf, size_t len)
 {
     int ansi_state = 0, ansi_size = 0;
     int i, escape_at = -1, begin_at = -1;
@@ -652,7 +669,7 @@ as2:
                 ansi_buffer[ansi_size] = this;
                 ansi_buffer[ansi_size + 1] = 0;
                 //printk("Found ANSI sequence: \"%s\"\n", ansi_buffer);
-                do_ansi(ansi_buffer, ansi_size);
+                do_ansi(vc, ansi_buffer, ansi_size);
                 *isansi = 1;
                 return ansi_size;
             }
@@ -678,21 +695,22 @@ videocon_write(struct device *dev, void *_buf, size_t len)
     char *buf = _buf;
     int ansis = 0;
     int isansi = 0;
+    struct vconsole *vc = dev->priv;
 
-    clear_cursor();
+    clear_cursor(vc);
 
     for (int i = 0; i < len;) {
         /* find ANSI escape sequences */
-        ansis = ansi_try_parse(&isansi, _buf + i, len - i);
+        ansis = ansi_try_parse(vc, &isansi, _buf + i, len - i);
         if (isansi) {
             i += ansis + 3;
             continue;
         }
-        videocon_emit(buf[i]);
+        videocon_emit(vc, buf[i]);
         i ++;
     }
 
-    draw_cursor();
+    draw_cursor(vc);
 
     return len;
 }
@@ -722,19 +740,21 @@ struct device videocon_device = {
     .pos = 0,
     .fs = NULL,
     .name = "videoconsole",
-    .priv = NULL,
+    .priv = &__vc_0, /* FIXME */
 };
 
+#if 0
 static void
 blink_cursor(void *aux)
 {
     if (__cursor_shown)
-        clear_cursor();
+        clear_cursor(aux);
     else
-        draw_cursor();
+        draw_cursor(aux);
 
     work_reschedule(50);
 }
+#endif
 
 int video_console_init()
 {
@@ -742,7 +762,7 @@ int video_console_init()
     extern struct device *default_user_device;
     default_user_device = &videocon_device;
     __lfb = bga_get_lfb();
-    struct work *blinker = work_create(blink_cursor, NULL);
+    //struct work *blinker = work_create(blink_cursor, );
     //schedule_work_delay(blinker, 50);
     spin_lock_init(&scroll_lock);
     spin_lock_init(&cursor_lock);
