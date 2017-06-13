@@ -259,6 +259,9 @@ task_block(struct task *task)
 void
 task_suspend(struct task *task, int sig)
 {
+    /* flush the controlling terminal */
+    if (task->ctty)
+        tty_flush_output(task->ctty);
     task->owner->status = TASK_SUSPENDED;
     task->owner->exit_code = sig;
     task_unblock_waiters(task);
