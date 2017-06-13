@@ -60,7 +60,7 @@ int fb_file_write(struct file *f, void *_buf, size_t count)
     if (f->fpos + count > p->lfb_size)
         count = p->lfb_size - f->fpos;
 
-    printk("%s: fpos %d from 0x%x count %d\n", __func__, f->fpos, _buf, count);
+    //printk("%s: fpos %d from 0x%x count %d\n", __func__, f->fpos, _buf, count);
 
     memcpy(p->lfb + f->fpos, _buf, count);
 
@@ -84,7 +84,7 @@ int fb_file_fstat(struct file *f, struct stat *st)
 int
 fb_file_truncate(struct file *f, int pos)
 {
-    return -EROFS;
+    return 0;
 }
 
 int
