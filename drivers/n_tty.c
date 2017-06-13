@@ -15,7 +15,6 @@ n_tty_flush(struct tty_device *tty)
     return ret;
 }
 
-
 static int
 n_tty_write_output(struct tty_device *tty, uint8_t byte)
 {

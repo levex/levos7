@@ -455,6 +455,10 @@ task_exit(struct task *t)
     //printk("would send signal SIGCHLD to %d from %d\n", t->ppid, t->pid);
     send_signal(get_task_for_pid(t->ppid), SIGCHLD);
 
+    /* flush the controlling terminal */
+    if (t->ctty)
+        tty_flush_output(t->ctty);
+
     /* check if there are waiters */
     task_unblock_waiters(t);
 

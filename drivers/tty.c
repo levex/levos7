@@ -89,7 +89,7 @@ size_t tty_fwrite(struct file *f, void *_buf, size_t len)
     for (int i = 0; i < len; i ++)
         n += tty->tty_ldisc->write_output(tty, buf[i]);
 
-    tty->tty_device->tty_interrupt_output(tty->tty_device, tty, len);
+    tty->tty_device->tty_interrupt_output(tty->tty_device, tty, n);
 
     return n;
 }
@@ -199,6 +199,12 @@ struct tty_device *
 tty_get(int id)
 {
 	return NULL;
+}
+
+void
+tty_flush_output(struct tty_device *tty)
+{
+    ring_buffer_flush(&tty->tty_out);
 }
 
 int

@@ -16,6 +16,13 @@ ring_buffer_init(struct ring_buffer *rb, int capacity)
 }
 
 void
+ring_buffer_flush(struct ring_buffer *rb)
+{
+    rb->size = 0;
+    rb->head = rb->tail = 0;
+}
+
+void
 ring_buffer_set_flags(struct ring_buffer *rb, int flags)
 {
     rb->flags = flags;
