@@ -3,6 +3,7 @@
 #include <levos/task.h>
 #include <levos/x86.h> /* FIXME */
 #include <levos/intr.h>
+#include <levos/tty.h>
 #include <levos/arch.h>
 #include <levos/palloc.h>
 #include <levos/page.h>
@@ -261,7 +262,10 @@ task_suspend(struct task *task, int sig)
 {
     /* flush the controlling terminal */
     if (task->ctty)
-        tty_flush_output(task->ctty);
+        task->ctty->tty_device->tty_interrupt_output(task->ctty->tty_device,
+                task->ctty,
+                ring_buffer_size(&task->ctty->tty_out));
+
     task->owner->status = TASK_SUSPENDED;
     task->owner->exit_code = sig;
     task_unblock_waiters(task);
