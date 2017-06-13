@@ -83,6 +83,12 @@ serial_file_close(struct file *f)
     free(f);
 }
 
+int
+serial_file_truncate(struct file *f, int len)
+{
+    return 0;
+}
+
 void
 serial_irq(struct pt_regs *regs)
 {
@@ -101,6 +107,7 @@ struct file_operations serial_fops = {
     .write = serial_file_write,
     .fstat = serial_file_fstat,
     .close = serial_file_close,
+    .truncate = serial_file_truncate,
 };
 
 struct file serial_base_file = {

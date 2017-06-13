@@ -48,6 +48,8 @@ cmdline_parse(char *cmdline)
     extern struct device *console_device;
     extern struct device *videocon_device;
     default_user_device = &console_device;
+    extern int __sysctl_trace_sys;
+    __sysctl_trace_sys = 0;
 
     pch = strtok_r(cmdline, " ", &lasts);
     while (pch != NULL) {
@@ -57,6 +59,8 @@ cmdline_parse(char *cmdline)
         } else if (strcmp(pch, "vga") == 0) {
             /* use VGA terminal as TTY base */
             default_user_device = &videocon_device;
+        } else if (strcmp(pch, "tracesys") == 0) {
+            __sysctl_trace_sys = 1;
         }
         pch = strtok_r(NULL, " ", &lasts);
     }

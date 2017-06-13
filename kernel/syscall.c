@@ -1442,7 +1442,7 @@ __trace_return(int rc)
             current_task->pid, rc, errno_to_string(rc));
 }
 
-static int __sysctl_trace_sys = 0;
+int __sysctl_trace_sys = 0;
 
 int
 syscall_hub(int no, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
