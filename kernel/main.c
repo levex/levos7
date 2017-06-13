@@ -238,7 +238,7 @@ init_task(void)
 #endif
 
     /* open the init executable */
-    struct file *f = vfs_open("/usr/bin/dash");
+    struct file *f = vfs_open("/init");
 #ifdef CONFIG_EXT2_TEST
     struct ext2_inode inode;
     int ino = ext2_new_inode(f->fs, &inode);
@@ -257,7 +257,7 @@ init_task(void)
         ext2_write_file(f, the_data, strlen(the_data));
     }
 
-    f = vfs_open("/usr/bin/dash");
+    f = vfs_open("/init");
 #endif
 
     if (f == NULL || ((int) f < 0 && (int)f > -4096))
@@ -268,7 +268,7 @@ init_task(void)
     activate_pgd(current_task->mm);
 
     char *init_argvp[] = {
-        "/usr/bin/dash",
+        "/init",
         //"hello",
         NULL,
     };
@@ -276,6 +276,8 @@ init_task(void)
     char *init_envp[] = {
         "HOME=/",
         "PATH=/:/bin:/usr/bin",
+        "TERM=xterm",
+        "SHELL=/usr/bin/dash",
         "USER=root",
         NULL,
     };
