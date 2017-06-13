@@ -28,6 +28,40 @@
 #include <levos/multiboot.h>
 #include <levos/time.h>
 
+static char kernel_cmdline[512];
+
+void
+multiboot_get_cmdline(struct multiboot_header *mbhdr)
+{
+    if (mbhdr->mb_flags & (1 << 2))
+        memcpy(kernel_cmdline, VIRT_BASE + mbhdr->mb_cmdline, strlen(VIRT_BASE + mbhdr->mb_cmdline));
+}
+
+void
+cmdline_parse(char *cmdline)
+{
+    char *pch, *lasts;
+    printk("Kernel command line: %s\n", cmdline);
+
+    /* set defaults */
+    extern struct device *default_user_device;
+    extern struct device *console_device;
+    extern struct device *videocon_device;
+    default_user_device = &console_device;
+
+    pch = strtok_r(cmdline, " ", &lasts);
+    while (pch != NULL) {
+        if (strcmp(pch, "serial") == 0) {
+            /* use serial as tty base */
+            default_user_device = &console_device;
+        } else if (strcmp(pch, "vga") == 0) {
+            /* use VGA terminal as TTY base */
+            default_user_device = &videocon_device;
+        }
+        pch = strtok_r(NULL, " ", &lasts);
+    }
+}
+
 void
 bss_init(void)
 {
@@ -53,10 +87,13 @@ kernel_main(uint32_t boot_sig, void *ptr)
     console_init();
 
     printk("LevOS %d.%d booting...\n", LEVOS_VERSION_MAJOR, LEVOS_VERSION_MINOR);
-    if (boot_sig == 0x2BADB002)
+    if (boot_sig == 0x2BADB002) {
         printk("  booted by a multiboot compliant bootloader\n");
+    }
     printk("mm: total RAM: %d bytes (~%d KB)\n", arch_get_total_ram(),
             arch_get_total_ram() / 1024);
+
+    printk("cmdline: %s\n", kernel_cmdline);
 
     //printk("so far used: %d of %d, free: %d\n", palloc_get_used(), 
             //palloc_get_total(), palloc_get_free());
@@ -76,6 +113,9 @@ kernel_main(uint32_t boot_sig, void *ptr)
     arch_very_late_init();
 
     palloc_reinit();
+
+    multiboot_get_cmdline(VIRT_BASE + ptr);
+    cmdline_parse(kernel_cmdline);
     
     sched_init();
 
@@ -143,8 +183,6 @@ do_first_init()
     /* setup to use tty0 */
     extern struct device *default_user_device;
     struct tty_device *tty = tty_new(default_user_device);
-    //serial_signup(tty);
-    kbd_signup(tty);
     tty->tty_fg_proc = current_task->pid;
     struct file *f_in = tty_get_file(tty);
     f_in->refc = 3;
@@ -214,6 +252,7 @@ init_task(void)
 
     vfs_mount("/proc", NULL);
     vfs_mount("/dev", (void *) 1);
+    //vfs_mount("/tmp", (void *) 2);
 
 #ifdef CONFIG_RING_BUFFER_TEST
     struct ring_buffer rb;

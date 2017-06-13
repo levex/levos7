@@ -49,6 +49,7 @@ tty_new(struct device *dev)
     mprintk("creating new TTY device with base %s\n", dev->name);
 
     tty->tty_device = dev;
+    tty->tty_device->tty_signup_input(dev, tty);
     tty->tty_state = TTY_STATE_UNKNOWN;
     tty->tty_ldisc = &n_tty_ldisc;
     tty->tty_id = tty_get_id();

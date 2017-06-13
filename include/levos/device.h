@@ -21,6 +21,7 @@ struct device
     size_t (*write)(struct device *, void *, size_t);
 
     int (*tty_interrupt_output)(struct device *, struct tty_device *, int);
+    int (*tty_signup_input)(struct device *, struct tty_device *);
 
     unsigned long pos;
 

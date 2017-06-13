@@ -740,11 +740,19 @@ size_t videocon_tty_interrupt_output(struct device *dev, struct tty_device *tty,
     free(kbuf);
 }
 
+int
+videocon_do_signup(struct device *dev, struct tty_device *tty)
+{
+    /* the videoconsole's default input is the keyboard */
+    kbd_signup(tty);
+}
+
 struct device videocon_device = {
     .type = DEV_TYPE_CHAR,
     .read = videocon_read,
     .write = videocon_write,
     .tty_interrupt_output = videocon_tty_interrupt_output,
+    .tty_signup_input = videocon_do_signup,
     .pos = 0,
     .fs = NULL,
     .name = "videoconsole",
@@ -768,7 +776,6 @@ int video_console_init()
 {
     bga_set_video(VT_DISPLAY_WIDTH, VT_DISPLAY_HEIGHT, 32, /* LFB */ 1, /* CLEAR */ 1);
     extern struct device *default_user_device;
-    default_user_device = &videocon_device;
     __lfb = bga_get_lfb();
     //struct work *blinker = work_create(blink_cursor, );
     //schedule_work_delay(blinker, 50);
