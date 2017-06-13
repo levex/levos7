@@ -13,6 +13,14 @@
 #define VT_CHAR_SIZE 8
 #define VT_TABSIZE 4
 
+struct ansi_struct {
+#define ANSI_BOLD             (1 << 0) /* bold colors */
+#define ANSI_EXPECT_COLOR     (1 << 1) /* expecting an SGR color id */
+#define ANSI_EXPECT_COLOR_FG  (1 << 2) /* expectation is for FG (ifset) or BG */
+#define ANSI_EXPECT_255_COLOR (1 << 3) /* 255 color mode */
+    int ansi_flags;
+};
+
 struct vconsole {
     int vc_px; /* pixel X */
     int vc_py; /* pixel Y */
@@ -20,6 +28,12 @@ struct vconsole {
     int vc_spy; /* saved pixel Y */
     uint32_t vc_fg_col; /* foreground color */
     uint32_t vc_bg_col; /* background color */
+
+#define CURSOR_SHOWN (1 << 0)
+#define CURSOR_CAN_SHOW (1 << 1)
+    int vc_cursor_flags;
+
+    struct ansi_struct vc_ansi; /* ansi state and stuff */
 };
 
 struct vconsole __vc_0 = {
@@ -29,22 +43,16 @@ struct vconsole __vc_0 = {
     .vc_spy = 0,
     .vc_fg_col = 0x00ffffff,
     .vc_bg_col = 0x00000000,
+    .vc_cursor_flags = CURSOR_CAN_SHOW,
+    .vc_ansi = {
+        .ansi_flags = 0,
+    },
 };
 
 #define VT_WIDTH_CHARS (VT_DISPLAY_WIDTH / VT_CHAR_SIZE)
 #define VT_HEIGHT_CHARS (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)
 
 static uint32_t *__lfb = 0;
-volatile int __in_ansi = 0;
-
-static int __cursor_shown = 0;
-static int show_cursor = 1;
-
-#define ANSI_BOLD             (1 << 0) /* bold colors */
-#define ANSI_EXPECT_COLOR     (1 << 1) /* expecting an SGR color id */
-#define ANSI_EXPECT_COLOR_FG  (1 << 2) /* expectation is for FG (ifset) or BG */
-#define ANSI_EXPECT_255_COLOR (1 << 3) /* 255 color mode */
-static int ansi_flags = 0;
 
 char vt_array[(VT_DISPLAY_WIDTH / VT_CHAR_SIZE) * (VT_DISPLAY_HEIGHT / VT_CHAR_SIZE)];
 #define PUT_CHAR_VT(vc, c) \
@@ -113,23 +121,23 @@ do_cursor(struct vconsole *vc, uint32_t col)
 static void
 draw_cursor(struct vconsole *vc)
 {
-    if (!show_cursor)
+    if (!(vc->vc_cursor_flags & CURSOR_CAN_SHOW))
         return;
     spin_lock(&cursor_lock);
     do_cursor(vc, 0x00333333);
-    __cursor_shown = 1;
+    vc->vc_cursor_flags |= CURSOR_SHOWN;
     spin_unlock(&cursor_lock);
 }
 
 static void
 clear_cursor(struct vconsole *vc)
 {
-    if (!show_cursor)
+    if (!(vc->vc_cursor_flags & CURSOR_CAN_SHOW))
         return;
 
     spin_lock(&cursor_lock);
     do_cursor(vc, vc->vc_bg_col);
-    __cursor_shown = 0;
+    vc->vc_cursor_flags &= ~CURSOR_SHOWN;
     spin_unlock(&cursor_lock);
 }
 
@@ -242,41 +250,41 @@ __do_ansi_sgr(struct vconsole *vc, char *buf, size_t len)
             //ansi_flags & ANSI_EXPECT_COLOR_FG ? "fg " : "bg ",
             //len, buf[0], ret);
 
-    if (!(ansi_flags & ANSI_EXPECT_COLOR) && !(ansi_flags & ANSI_EXPECT_255_COLOR)) {
+    if (!(vc->vc_ansi.ansi_flags & ANSI_EXPECT_COLOR) && !(vc->vc_ansi.ansi_flags & ANSI_EXPECT_255_COLOR)) {
         if (ret == 1) {
-            ansi_flags |= ANSI_BOLD;
+            vc->vc_ansi.ansi_flags |= ANSI_BOLD;
             return;
         }
         if (ret == 22) {
-            ansi_flags &= ~ANSI_BOLD;
+            vc->vc_ansi.ansi_flags &= ~ANSI_BOLD;
             return;
         }
 
         if (ret == 38) {
-            ansi_flags |= ANSI_EXPECT_COLOR;
-            ansi_flags |= ANSI_EXPECT_COLOR_FG;
+            vc->vc_ansi.ansi_flags |= ANSI_EXPECT_COLOR;
+            vc->vc_ansi.ansi_flags |= ANSI_EXPECT_COLOR_FG;
             return;
         }
 
         if (ret == 48) {
-            ansi_flags |= ANSI_EXPECT_COLOR;
-            ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+            vc->vc_ansi.ansi_flags |= ANSI_EXPECT_COLOR;
+            vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
             return;
         }
     }
 
-    if (ansi_flags & ANSI_EXPECT_COLOR) {
+    if (vc->vc_ansi.ansi_flags & ANSI_EXPECT_COLOR) {
         if (ret == 5) {
             /* 255 color mode */
-            ansi_flags |= ANSI_EXPECT_255_COLOR;
-            ansi_flags &= ~ANSI_EXPECT_COLOR;
+            vc->vc_ansi.ansi_flags |= ANSI_EXPECT_255_COLOR;
+            vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR;
             return;
         } else if (ret == 2) {
             /* r;g;b mode TODO */
             printk("requested RGB mode, we do not yet support\n");
-            ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
-            ansi_flags &= ~ANSI_EXPECT_COLOR;
-            ansi_flags &= ~ANSI_EXPECT_255_COLOR;
+            vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+            vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR;
+            vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_255_COLOR;
             return;
         }
 
@@ -285,27 +293,27 @@ __do_ansi_sgr(struct vconsole *vc, char *buf, size_t len)
         return;
     }
 
-    if (ansi_flags & ANSI_EXPECT_255_COLOR) {
+    if (vc->vc_ansi.ansi_flags & ANSI_EXPECT_255_COLOR) {
         /* this value is the 255 color value */
-        if (ansi_flags & ANSI_EXPECT_COLOR_FG) {
+        if (vc->vc_ansi.ansi_flags & ANSI_EXPECT_COLOR_FG) {
             /* for foreground */
             ansi_set_color(&vc->vc_fg_col, ret);
         } else {
             /* for background */
             ansi_set_color(&vc->vc_bg_col, ret);
         }
-        ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
-        ansi_flags &= ~ANSI_EXPECT_COLOR;
-        ansi_flags &= ~ANSI_EXPECT_255_COLOR;
+        vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR_FG;
+        vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_COLOR;
+        vc->vc_ansi.ansi_flags &= ~ANSI_EXPECT_255_COLOR;
         return;
     }
 
 #define RGB(r, g, b) (0x00000000 | b | g << 8 | r << 16)
 #define SGR_SET_FG(rt, col, col_b) \
-    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { vc->vc_fg_col = (col_b); return; } else \
+    if (ret == (rt) && (vc->vc_ansi.ansi_flags & ANSI_BOLD)) { vc->vc_fg_col = (col_b); return; } else \
             if (ret == (rt)) { vc->vc_fg_col = (col); return; }
 #define SGR_SET_BG(rt, col, col_b) \
-    if (ret == (rt) && (ansi_flags & ANSI_BOLD)) { vc->vc_bg_col = (col_b); return; } else \
+    if (ret == (rt) && (vc->vc_ansi.ansi_flags & ANSI_BOLD)) { vc->vc_bg_col = (col_b); return; } else \
             if (ret == (rt)) { vc->vc_bg_col = (col); return; }
 
     if (ret == 0) {
@@ -579,13 +587,13 @@ do_ansi_rcp(struct vconsole *vc, char *buf, size_t len)
 void
 do_ansi_showcur(struct vconsole *vc, char *buf, size_t len)
 {
-    show_cursor = 1;
+    vc->vc_cursor_flags |= CURSOR_CAN_SHOW;
 }
 
 void
 do_ansi_hidecur(struct vconsole *vc, char *buf, size_t len)
 {
-    show_cursor = 0;
+    vc->vc_cursor_flags &= ~CURSOR_CAN_SHOW;
 }
 
 void
