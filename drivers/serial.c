@@ -114,6 +114,7 @@ struct file serial_base_file = {
     .fops = &serial_fops,
     .fs = NULL,
     .fpos = 0,
+    .type = DEV_TYPE_CHAR,
     .isdir = 0,
     .respath = "ttyS0",
     .full_path = "/dev/ttyS0",

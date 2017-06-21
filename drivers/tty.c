@@ -9,6 +9,11 @@ static int __last_tty_id;
 
 #define MODULE_NAME tty
 
+/* the device to create the tty0 on */
+extern struct device *default_user_device;
+
+static struct tty_device *ttys[8];
+
 static
 int tty_get_id()
 {
@@ -49,9 +54,10 @@ tty_new(struct device *dev)
     mprintk("creating new TTY device with base %s\n", dev->name);
 
     tty->tty_device = dev;
-    tty->tty_device->tty_signup_input(dev, tty);
+    //tty->tty_device->tty_signup_input(dev, tty);
     tty->tty_state = TTY_STATE_UNKNOWN;
-    tty->tty_ldisc = &n_tty_ldisc;
+    tty->tty_ldisc = malloc(sizeof(*tty->tty_ldisc));
+    memcpy(tty->tty_ldisc, &n_tty_ldisc, sizeof(*tty->tty_ldisc));
     tty->tty_id = tty_get_id();
     ring_buffer_init(&tty->tty_out, PTY_BUF_SIZE);
     termios_init(&tty->tty_termios);
@@ -66,6 +72,19 @@ tty_new(struct device *dev)
     }
 
     return tty;
+}
+
+struct tty_device *
+get_tty(int ttyid)
+{
+    mprintk("handed out tty%d\n", ttyid);
+    return ttys[ttyid];
+}
+
+void
+tty_switch(int ttyid)
+{
+    ttys[ttyid]->tty_device->tty_signup_input(ttys[ttyid]->tty_device, ttys[ttyid]);
 }
 
 size_t tty_fread(struct file *f, void *buf, size_t len)
@@ -166,23 +185,29 @@ int tty_fioctl(struct file *f, unsigned long req, unsigned long arg)
     return tty_ioctl(tty, req, arg);
 }
 
+int tty_ftruncate(struct file *f, size_t len)
+{
+    return 0;
+}
+
 struct file_operations tty_fops = {
     .read = tty_fread,
     .write = tty_fwrite,
     .fstat = tty_ffstat,
     .close = tty_fclose,
     .readdir = tty_freaddir,
+    .truncate = tty_ftruncate,
     .ioctl = tty_fioctl,
 };
 
 struct file *
-tty_get_file(struct tty *tty)
+tty_get_file(struct tty_device *tty)
 {
     struct file *filp = malloc(sizeof(*filp));
     if (!filp)
         return NULL;
 
-    filp->fops = &tty_fops,
+    filp->fops = &tty_fops;
     filp->fs = NULL;
     filp->fpos = 0;
     filp->isdir = 0;
@@ -195,12 +220,6 @@ tty_get_file(struct tty *tty)
     return filp;
 };
 
-struct tty_device *
-tty_get(int id)
-{
-	return NULL;
-}
-
 void
 tty_flush_output(struct tty_device *tty)
 {
@@ -210,7 +229,22 @@ tty_flush_output(struct tty_device *tty)
 int
 tty_init(void)
 {
+    int base_vtid = 0;
 	printk("tty: initializing layer\n");
+
+    /* always create tty0 on the default user device */
+    ttys[0] = tty_new(default_user_device);
+
+    /* if the device supports VTs, then VT0 is used for tty0,
+     * otherwise VT0 is used for tty1
+     */
+    if (default_user_device->subtype == DEV_TYPE_CHAR_VT_TTY) {
+        mprintk("VTs enabled\n");
+        base_vtid = 1;
+    }
+
+    ttys[1] = tty_new(videocon_get_for_vt(base_vtid));
+
     return 0;
 }
 

@@ -421,6 +421,12 @@ kbd_irq(struct pt_regs *regs)
     int rc;
     char tmp;
 
+    if (_alt && c) {
+        printk("c: ALT+%d\n", c);
+        vt_switch(c - 49);
+        return;
+    }
+
     //printk("yay (%x): %c,%x\n", '\b', c, c);
     __keyboard_inject(c);
 }

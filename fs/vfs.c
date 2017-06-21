@@ -270,7 +270,8 @@ dup_file(struct file *f)
         ret->full_path = strdup(f->full_path);
 
     /* XXX: GIANT HACK */
-    ret->priv = ext2_dup_priv(f->priv);
+    if (f->priv)
+        ret->priv = ext2_dup_priv(f->priv);
 
     /* done */
     return ret;

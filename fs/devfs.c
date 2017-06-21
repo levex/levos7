@@ -168,22 +168,38 @@ static struct devfs_file _files[] = {
     { 0x80000005, "/ttyS0", &serial_base_file},
     { 0x00000006, "/tty", &ctty_base_file},
     { 0x00000007, "/fb", &fb_base_file},
+    { 0x00000008, "/tty0", NULL},
+    { 0x00000009, "/tty1", NULL},
     { 0x00000000, NULL, NULL},
 };
 
 static int _files_num = (sizeof(_files) / sizeof(_files[0]));
 
 int
-devfs_get_inode(char *path, struct file **filp)
+devfs_get_inode(char *path, struct file **filp, int *flags)
 {
     struct devfs_file *f = &_files[0];
     int i = 0;
+
+    if (flags)
+        *flags = 0;
 
     /* check for root files */
     for (i = 0, f = &_files[i]; f && f->path != NULL; f = &_files[++i]) {
         if (strcmp(path, f->path) == 0) {
             if (filp)
                 *filp = f->base_file;
+            if (f->inode_no == 0x00000008) {
+                /* tty0 */
+                *filp = tty_get_file(get_tty(0));
+                if (flags)
+                    *flags = 1;
+            } else if (f->inode_no == 0x00000009) {
+                /* tty1 */
+                *filp = tty_get_file(get_tty(1));
+                if (flags)
+                    *flags = 1;
+            }
             return f->inode_no;
         }
     }
@@ -264,12 +280,14 @@ devfs_open(struct filesystem *fs, char *path)
 {
     struct file *filp;
     int inode;
+    int flags;
 
-    inode = devfs_get_inode(path, &filp);
+    inode = devfs_get_inode(path, &filp, &flags);
     if (inode == -1)
         return -ENOENT;
 
-    filp = dup_file(filp);
+    if (!flags)
+        filp = dup_file(filp);
     
     if (strcmp(path, "/") == 0 || strlen(path) == 0)
         return devfs_open_root(fs, filp);
@@ -282,7 +300,7 @@ devfs_stat(struct filesystem *fs, char *path, struct stat *st)
 {
     if (strcmp(path, "/") == 0 || strlen(path) == 0)
         st->st_mode = S_IFDIR;
-    else if (devfs_get_inode(path, NULL) == -1)
+    else if (devfs_get_inode(path, NULL, NULL) == -1)
         return -ENOENT;
 
     return 0;

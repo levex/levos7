@@ -379,6 +379,7 @@ sys_execve(char *fn, char **u_argvp, char **u_envp)
     struct file *f = vfs_open(kfn);
     if (f == NULL || IS_ERR(f)) {
         free(kfn);
+        printk("nope %s\n", kfn);
         return -ENOENT;
     }
 

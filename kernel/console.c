@@ -76,6 +76,7 @@ size_t console_tty_interrupt_output(struct device *dev, struct tty_device *tty, 
 
 struct device console_device = {
     .type = DEV_TYPE_CHAR,
+    .subtype = DEV_TYPE_CHAR_NOVT_TTY,
     .read = console_read,
     .write = console_write,
     .tty_signup_input = console_do_signup,

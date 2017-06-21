@@ -58,7 +58,7 @@ cmdline_parse(char *cmdline)
             default_user_device = &console_device;
         } else if (strcmp(pch, "vga") == 0) {
             /* use VGA terminal as TTY base */
-            default_user_device = &videocon_device;
+            default_user_device = videocon_get_for_vt(0);
         } else if (strcmp(pch, "tracesys") == 0) {
             __sysctl_trace_sys = 1;
         }
@@ -119,7 +119,6 @@ kernel_main(uint32_t boot_sig, void *ptr)
     palloc_reinit();
 
     multiboot_get_cmdline(VIRT_BASE + ptr);
-    cmdline_parse(kernel_cmdline);
     
     sched_init();
 
@@ -185,8 +184,8 @@ do_first_init()
     setup_filetable(current_task);
 
     /* setup to use tty0 */
-    extern struct device *default_user_device;
-    struct tty_device *tty = tty_new(default_user_device);
+    struct tty_device *tty = get_tty(0);
+    vt_switch(0);
     tty->tty_fg_proc = current_task->pid;
     struct file *f_in = tty_get_file(tty);
     f_in->refc = 3;
@@ -369,6 +368,10 @@ late_init(void)
     mapping_init();
 
     video_console_init();
+
+    cmdline_parse(kernel_cmdline);
+
+    tty_init();
 
     /* use condvar */
     spin_unlock(&setup_lock);
