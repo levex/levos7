@@ -173,6 +173,15 @@ int tty_ioctl(struct tty_device *tty, unsigned long req, unsigned long arg)
     } else if (req == TCFLSH) {
         /* FIXME */
         return 0;
+    } else if (req == TIOCNOTTY) {
+        printk("TIOCNOTTY");
+        /*FIXME: this needs proper signals and session throwup */
+        if (tty == current_task->ctty) {
+            current_task->ctty = NULL;
+            return 0;
+        }
+
+        return -EINVAL;
     }
 
     return -EINVAL;

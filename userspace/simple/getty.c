@@ -13,6 +13,22 @@ main(int argc, char **argvp)
 {
     struct termios tios, orig_tios;
 
+    if (argc == 2) {
+        int fd = open("/dev/tty", 0);
+        /* drop current controlling terminal */
+        ioctl(fd, 0x5422, 0);
+
+        /* open the new tty */
+        close(fd);
+        fd = open(argvp[1], 0);
+
+        /* assume that is the new terminal */
+        dup2(fd, 0);
+        tcsetpgrp(0, getpid());
+        dup2(fd, 1);
+        dup2(fd, 2);
+    }
+
     int fd = open("/etc/issue", O_RDONLY);
     if (fd == -1) {
         perror("open");

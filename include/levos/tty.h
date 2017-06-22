@@ -163,6 +163,7 @@ struct winsize {
 #define TIOCMSET	0x5418
 #define TIOCGSOFTCAR	0x5419
 #define TIOCSSOFTCAR	0x541A
+#define TIOCNOTTY   0x5422
 
 #define MAX_CANON 4096
 

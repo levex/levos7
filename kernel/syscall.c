@@ -9,6 +9,7 @@
 #include <levos/signal.h>
 #include <levos/socket.h>
 #include <levos/work.h>
+#include <levos/tty.h>
 
 #define ARGS_MAX 16
 #define ENVS_MAX 16
@@ -257,6 +258,15 @@ sys_open(char *__filename, int flags, int mode)
 
 xc:
     f->mode = mode;
+
+    /* handle controlling terminal open */
+    if (!(flags & O_NOCTTY))
+        if (f->type == FILE_TYPE_TTY && current_task->ctty == NULL) {
+            current_task->ctty = f->priv;
+            printk("pid %d acquired new ctty /dev/tty%d\n", current_task->pid,
+                    current_task->ctty->tty_id);
+        }
+
     for (i = 0; i < FD_MAX; i ++) {
         if (task->file_table[i] == NULL) {
             task->file_table[i] = f;

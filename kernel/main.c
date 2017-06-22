@@ -281,6 +281,7 @@ init_task(void)
 
     /* open the init executable */
     struct file *f = vfs_open("/init");
+
 #ifdef CONFIG_EXT2_TEST
     struct ext2_inode inode;
     int ino = ext2_new_inode(f->fs, &inode);
