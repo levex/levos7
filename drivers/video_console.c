@@ -128,8 +128,6 @@ vt_switch_to(struct vconsole *new)
 void
 vt_switch(int vtid)
 {
-    mprintk("%s: to vtid %d\n", __func__, vtid);
-
     tty_switch(vtid);
 
     if (vtid == 0) {
@@ -516,6 +514,7 @@ do_ansi_ed(struct vconsole *vc, char *buf, size_t len)
     } else if (ret == 2) {
         /* erase the whole display */
         memsetl(__lfb, vc->vc_bg_col, 4 * VT_DISPLAY_WIDTH * VT_DISPLAY_HEIGHT);
+        memset(vc->vc_char_buf, 0, VT_WIDTH_CHARS * VT_HEIGHT_CHARS);
         vc->vc_px = vc->vc_py = 0;
         return;
     }
@@ -867,8 +866,6 @@ videocon_write(struct device *dev, void *_buf, size_t len)
     int isansi = 0;
     struct vconsole **__vc = dev->priv;
     struct vconsole *vc = __vc;
-
-    printk("%s: to vtid %d\n", __func__, vc->vc_id);
 
     clear_cursor(vc);
 

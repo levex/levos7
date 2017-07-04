@@ -422,7 +422,6 @@ kbd_irq(struct pt_regs *regs)
     char tmp;
 
     if (_alt && c) {
-        printk("c: ALT+%d\n", c);
         vt_switch(c - 49);
         return;
     }
