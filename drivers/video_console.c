@@ -353,6 +353,7 @@ ansi_set_color(uint32_t *ret, int val)
     DEFCOL(6, 0x00008080);
     DEFCOL(7, 0x00c0c0c0);
     DEFCOL(8, 0x00808080);
+    DEFCOL(9, 0x00ff0000);
 
     printk("%s: unknown color %d\n", __func__, val);
 }
