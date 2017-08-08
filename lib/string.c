@@ -107,7 +107,7 @@ strdup(char *s)
     if (!r)
         return NULL;
 
-    memset(r, 0, strlen(s) + 1);
+    r[strlen(s)] = '\0';
     memcpy(r, s, strlen(s));
     return r;
 }
