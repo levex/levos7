@@ -68,7 +68,7 @@ icmp_send_echo_reply(struct net_info *ni, packet_t *pkt, struct icmp_header *icm
         + sizeof(struct icmp_header)
         + sizeof(struct icmp_echo_packet);
 
-    packet_t *tos = ip_construct_packet_eth(ni->ni_hw_mac, to_be_32(ni->ni_src_ip), to_be_32(ip->ip_srcaddr));
+    packet_t *tos = ip_construct_packet_eth(ni->ni_hw_mac, ni->ni_src_ip, to_be_32(ip->ip_srcaddr));
     if (!pkt)
         return PACKET_DROP;
 
