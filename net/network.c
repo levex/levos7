@@ -91,7 +91,7 @@ net_register_device(struct net_device *ndev)
 {
     /* by default, we want to set DHCP and not static */
     ndev->ndev_flags  =  NDEV_FLAG_DHCP;
-    ndev->ndev_flags &= ~NDEV_FLAG_STATIC;
+    //ndev->ndev_flags &= ~NDEV_FLAG_STATIC;
 
     int no = 0;
 
@@ -178,7 +178,7 @@ socket_fs_read(struct file *filp, void *buf, size_t len)
 {
     struct socket *sock = filp->priv;
 
-    return -ENOSYS;
+    return sock->sock_ops->read(sock, buf, len);
 }
 
 size_t

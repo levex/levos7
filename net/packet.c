@@ -8,6 +8,12 @@
 #include <levos/work.h>
 #include <levos/e1000.h> /* FIXME: make it net_device eventually */
 
+#ifdef CONFIG_ETH_DEBUG
+#define net_printk printk
+#else
+#define net_printk(...) ;
+#endif
+
 static struct list packet_list;
 static spinlock_t packet_list_lock;
 
@@ -120,12 +126,16 @@ packet_schedule_retransmission(struct net_info *ni,
     return work;
 }
 
+extern unsigned udp_hash_usp(const struct hash_elem *e, void *aux);
+extern bool udp_less_usp(const struct hash_elem *a, const struct hash_elem *b, void *aux);
+
 void
 net_info_init(struct net_info *ni)
 {
     memset(ni, 0, sizeof(*ni));
 
     hash_init(&ni->ni_tcp_infos, tcp_hash_tcp_info, tcp_less_tcp_info, NULL);
+    hash_init(&ni->ni_udp_sockets, udp_hash_usp, udp_less_usp, NULL);
     spin_lock_init(&ni->ni_tcp_infos_lock);
 }
 

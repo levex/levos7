@@ -111,10 +111,12 @@ arp_get_eth_addr(struct net_info *ni, ip_addr_t ip)
     struct hash_elem *helem = hash_find(&arpcache, &entry.helem);
     if (helem == NULL) {
         /* not in the cache, send request, wait then add to cache */
+        net_printk("%s: cache miss\n", __func__);
         return arp_do_request_eth(ni, ip);
     } else {
         /* element was in the cache, return the ethernet address */
         struct arp_cache_entry *entry = hash_entry(helem, struct arp_cache_entry, helem);
+        net_printk("%s: returned %pE\n", __func__, entry->ace_eth);
         return entry->ace_eth;
     }
 }

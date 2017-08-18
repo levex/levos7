@@ -24,6 +24,7 @@ struct sockaddr {
 struct socket_ops {
     int (*connect)(struct socket *, struct sockaddr *, socklen_t);
     int (*write)(struct socket *, void *buf, size_t len);
+    int (*read)(struct socket *, void *buf, size_t len);
     int (*destroy)(struct socket *);
 };
 

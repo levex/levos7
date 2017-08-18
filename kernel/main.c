@@ -361,8 +361,14 @@ late_init(void)
 
     pci_init();
 
+    arp_cache_insert(IP(255, 255, 255, 255), eth_broadcast_addr);
+
+    struct net_info *ni = &net_get_default()->ndev_ni;
+    NDEV_FROM_NI(ni)->up(NDEV_FROM_NI(ni));
+
 #ifdef CONFIG_TCP_TEST
     struct net_info *ni = &net_get_default()->ndev_ni;
+    NDEV_FROM_NI(ni)->up(ndev);
     test_tcp(ni);
 #endif
 

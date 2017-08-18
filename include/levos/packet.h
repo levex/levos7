@@ -41,6 +41,9 @@ struct net_info {
     struct hash ni_tcp_infos; /* hashtable (key: ti_src_port) containing the
                                  current state of TCP connections
                                */
+    struct hash ni_udp_sockets; /* hashtable (key: usp_src_port) containing
+                                    the private state of the socket
+                                */
     spinlock_t ni_tcp_infos_lock; /* lock for the table */
 };
 void net_info_init(struct net_info *);

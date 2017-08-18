@@ -2,6 +2,12 @@
 #include <levos/packet.h>
 #include <levos/eth.h>
 
+#ifdef CONFIG_ETH_DEBUG
+#define net_printk printk
+#else
+#define net_printk(...) ;
+#endif
+
 eth_addr_t
 eth_broadcast_addr = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
 

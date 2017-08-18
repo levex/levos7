@@ -301,13 +301,14 @@ e1000_net_up(struct net_device *ndev)
     struct e1000_device *edev = container_of(ndev, struct e1000_device, ndev);
     struct net_info *ni = &ndev->ndev_ni;
 
-    //e1000_enable_irq(edev);
+    e1000_enable_irq(edev);
 
     if (ndev->ndev_flags & NDEV_FLAG_DHCP) {
         net_printk("DOING DHCP\n");
         do_dhcp(ndev);
     } else if (ndev->ndev_flags & NDEV_FLAG_STATIC) {
         /* TODO: set static IP */
+        net_printk("WARNING: wanted to do static IP, but this is not yet supported\n");
     } else {
         net_printk("Forced link local address!\n");
         ni->ni_src_ip = IP(169, 254, 13, 37);
@@ -405,7 +406,7 @@ e1000_attach(struct pci_device *pdev)
     //udp_set_payload(packet, testpayload, strlen(testpayload));
 
     //e1000_send_packet(edev, packet);
-    e1000_net_up(&edev->ndev);
+    //e1000_net_up(&edev->ndev);
     net_register_device(&edev->ndev);
     return 1;
 }

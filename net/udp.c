@@ -8,6 +8,23 @@
 #include <levos/work.h>
 #include <levos/socket.h>
 
+unsigned udp_hash_usp(const struct hash_elem *e, void *aux)
+{
+    struct udp_sock_priv *usp = hash_entry(e, struct udp_sock_priv, usp_helem);
+
+    return hash_int(usp->usp_srcport);
+}
+
+bool udp_less_usp(const struct hash_elem *a,
+                     const struct hash_elem *b,
+                     void *aux)
+{
+    struct udp_sock_priv *ta = hash_entry(a, struct udp_sock_priv, usp_helem);
+    struct udp_sock_priv *tb = hash_entry(b, struct udp_sock_priv, usp_helem);
+
+    return ta->usp_srcport < ta->usp_srcport;
+}
+
 void
 udp_write_header(struct udp_header *udp, port_t srcport, port_t dstport)
 {
@@ -131,6 +148,65 @@ packet_t *udp_new_packet(struct net_info *ni, port_t srcport, ip_addr_t dstip,
 }
 
 int
+do_udp_handle_packet(struct net_info *ni, packet_t *pkt, struct udp_header *udp)
+{
+    struct hash_elem *helem;
+    struct udp_sock_priv *usp;
+    size_t payload_len = to_be_16(udp->udp_len) - sizeof(struct udp_header);
+
+    struct udp_sock_priv searcher = { .usp_srcport = to_be_16(udp->udp_dst_port) };
+
+    /* find a struct udp_sock_priv to find the socket */
+    helem = hash_find(&ni->ni_udp_sockets, &searcher.usp_helem);
+    if (helem == NULL) {
+        /* there is no socket connected on this end, drop this packet */
+
+        /* TODO: send ICMP Destination Unreachable - Port Unreachable */
+        return PACKET_DROP;
+    }
+
+    /* there is a socket listening on this side! */
+    usp = hash_entry(helem, struct udp_sock_priv, usp_helem);
+
+    /* check if this socket has enough space */
+    if (usp->usp_buffer_len + payload_len >= UDP_BUFFER_SIZE) {
+        printk("WARNING: dropping packet because the dgram buffer is full\n");
+        return PACKET_DROP;
+    }
+
+    /* write the payload of the packet to a dgram */
+    struct udp_dgram *dgram = malloc(sizeof(*dgram));
+    if (!dgram) {
+        printk("WARNING: ENOMEM while allocating a dgram\n");
+        return PACKET_DROP;
+    }
+
+    /* allocate space for the payload */
+    void *dgram_buffer = malloc(payload_len);
+    if (!dgram_buffer) {
+        free(dgram);
+        return PACKET_DROP;
+    }
+
+    /* copy the payload over */
+    memcpy(dgram_buffer, pkt->p_ptr, payload_len);
+
+    /* setup the dgram structure */
+    dgram->udg_buffer = dgram_buffer;
+    dgram->udg_len = payload_len;
+
+    /* housekeeping */
+    usp->usp_buffer_len += payload_len;
+
+    /* off it goes */
+    list_push_back(&usp->usp_dgrams, &dgram->udg_elem);
+
+    //printk("WROTE %d\n", payload_len);
+
+    return PACKET_HANDLED;
+}
+
+int
 udp_handle_packet(struct net_info *ni, packet_t *pkt, struct udp_header *udp)
 {
     net_printk(" ^ udp\n");
@@ -141,7 +217,7 @@ udp_handle_packet(struct net_info *ni, packet_t *pkt, struct udp_header *udp)
             udp->udp_src_port == to_be_16(67)) {
         return dhcp_handle_packet(ni, pkt, udp);
     } else {
-        net_printk("  ^ application handler null for port %d\n", udp->udp_dst_port);
+        return do_udp_handle_packet(ni, pkt, udp);
     }
     return PACKET_DROP;
 }
@@ -154,8 +230,13 @@ do_udp_inet_sock_connect(struct socket *sock, struct sockaddr_in *addr, socklen_
     sock->sock_ni = route_find_ni_for_dst(addr->sin_addr);
 
     priv->usp_dstip = to_le_32(addr->sin_addr);
-    priv->usp_dstport = to_le_16(addr->sin_port);
+    priv->usp_dstport = addr->sin_port;
     priv->usp_srcport = net_allocate_port(SOCK_DGRAM);
+
+    priv->usp_buffer_len = 0;
+    list_init(&priv->usp_dgrams);
+
+    hash_insert(&sock->sock_ni->ni_udp_sockets, &priv->usp_helem);
 
     net_printk("connected a UDP socket to %pI dstport %d srcport %d\n",
             priv->usp_dstip, priv->usp_dstport, priv->usp_srcport);
@@ -187,8 +268,8 @@ udp_sock_write(struct socket *sock, void *buf, size_t len)
     if (priv == NULL)
         return -ENOTCONN;
 
-    printk("UDP socket write! from %pI:%d to %pI:%d\n", sock->sock_ni->ni_src_ip,
-            priv->usp_srcport, priv->usp_dstip, priv->usp_dstport);
+    //printk("UDP socket write! from %pI:%d to %pI:%d\n", sock->sock_ni->ni_src_ip,
+            //priv->usp_srcport, priv->usp_dstip, priv->usp_dstport);
 
     pkt = udp_new_packet(sock->sock_ni, priv->usp_srcport, priv->usp_dstip,
                             priv->usp_dstport);
@@ -200,6 +281,51 @@ udp_sock_write(struct socket *sock, void *buf, size_t len)
     ndev->send_packet(ndev, pkt);
 
     return 0;
+}
+
+struct udp_dgram *
+udp_pop_dgram(struct udp_sock_priv *usp)
+{
+    struct list_elem *elem;
+    struct udp_dgram *udg;
+
+    /* wait for an element */
+    while (list_empty(&usp->usp_dgrams))
+        ;
+
+    /* get the first datagram */
+    elem = list_pop_front(&usp->usp_dgrams);
+
+    /* we have a datagram! */
+    udg = list_entry(elem, struct udp_dgram, udg_elem);
+
+    /* housekeeping */
+    usp->usp_buffer_len -= udg->udg_len;
+
+    /* return */
+    return udg;
+}
+
+int
+udp_sock_read(struct socket *sock, void *buf, size_t len)
+{
+    struct udp_sock_priv *priv = sock->sock_priv;
+    struct udp_dgram *udg = udp_pop_dgram(priv);
+    size_t alen = len;
+
+    /* find the maximum we can copy to userspace */
+    if (udg->udg_len < alen)
+        alen = udg->udg_len;
+
+    /* copy */
+    memcpy(buf, udg->udg_buffer, alen);
+
+    /* destroy the datagram */
+    free(udg->udg_buffer);
+    free(udg);
+
+    /* return the amount we've read */
+    return alen;
 }
 
 int
@@ -220,5 +346,6 @@ udp_sock_destroy(struct socket *sock)
 struct socket_ops udp_sock_ops = {
     .connect = udp_sock_connect,
     .write = udp_sock_write,
+    .read = udp_sock_read,
     .destroy = udp_sock_destroy,
 };

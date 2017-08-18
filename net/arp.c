@@ -3,6 +3,12 @@
 #include <levos/kernel.h>
 #include <levos/ip.h>
 
+#ifdef CONFIG_ARP_DEBUG
+#define net_printk printk
+#else
+#define net_printk(...) ;
+#endif
+
 uint8_t
 arp_get_plen(uint16_t ptype)
 {
@@ -208,7 +214,9 @@ arp_handle_reply(struct net_info *ni, packet_t *pkt, struct arp_header *arp)
     net_printk("ARP reply: hsrc %pE psrc %pI hdst %pE pdst %pI\n",
             offset, offset + hlen, offset + hlen + plen,
             offset + hlen + plen + hlen);
+
     arp_cache_insert(*((ip_addr_t *) (offset + hlen)), (uint8_t *) offset);
+
     return PACKET_DROP;
 }
 
