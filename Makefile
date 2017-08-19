@@ -52,6 +52,7 @@ Make.dep:
 	makedepend -f Make.dep -Iinclude $(C_SOURCES)
 
 depend:
+	touch Make.dep
 	makedepend -f Make.dep -Iinclude $(C_SOURCES)
 
 .PHONY: depend
@@ -73,6 +74,7 @@ clean:
 	-@rm $(OBJS) >/dev/null 2>&1|| true
 	-@rm $(KERN_NAME) >/dev/null 2>&1 || true
 
-ifeq ("$(wildcard Make.dep)","")
+ifneq ("$(wildcard Make.dep)","")
 include Make.dep
 endif
+# DO NOT DELETE
