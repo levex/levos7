@@ -14,6 +14,11 @@ mkdir cross-compiler/prefix
 cross_compiler=`pwd`/cross-compiler
 _ncores=`./determine_cores.sh`
 
+if [[ $IS_TRAVIS == 1 ]]
+then exec 3>/dev/null
+else exec 3>&1
+fi
+
 ######## Binutils
 
 echo Fetching binutils sources...
@@ -22,7 +27,7 @@ echo Fetching binutils sources...
 		-O ${cross_compiler}/src/${binutils_ver}.tar.gz
 cd ${cross_compiler}/src
 
-tar xzvf ${binutils_ver}.tar.gz
+tar xzvf ${binutils_ver}.tar.gz 1>/dev/null 2>&1
 
 echo Building binutils
 cd ${cross_compiler}/build
@@ -35,7 +40,8 @@ cd build-binutils
 	--disable-nls \
 	--disable-werror
 
-make -j${_ncores}
+echo making binutils
+make -j${_ncores} >&3
 make install 
 
 ######## GCC
@@ -47,7 +53,7 @@ echo Fetching GCC sources...
 		-O ${cross_compiler}/src/${gcc_ver}.tar.gz
 cd ${cross_compiler}/src
 
-tar xzvf ${gcc_ver}.tar.gz
+tar xzvf ${gcc_ver}.tar.gz 1>/dev/null 2>&1
 
 echo Building GCC
 cd ${cross_compiler}/build
@@ -60,8 +66,8 @@ cd build-gcc
 	--enable-languages=c,c++ \
 	--without-headers
 
-make -j${_ncores} all-gcc
-make -j${_ncores} all-target-libgcc
+make -j${_ncores} all-gcc >&3
+make -j${_ncores} all-target-libgcc >&3
 make install-gcc
 make install-target-libgcc
 
