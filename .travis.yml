@@ -1,0 +1,6 @@
+language: c
+script:
+- cd buildtools && sh build-cross-compiler.sh
+- export PATH=buildtools/cross-compiler/prefix/bin:$PATH && make
+
+install: true
