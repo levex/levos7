@@ -35,6 +35,8 @@ struct filesystem *ext2_mount(struct device *dev)
     p->blocksize = 1024 << sb->blocksize_hint;
     printk("blocksize: %d bytes\n", p->blocksize);
     p->inodesize =  sb->s_inode_size;
+    if (!p->inodesize)
+        p->inodesize = sizeof(struct ext2_inode);
     printk("inodesize: %d bytes\n", p->inodesize);
     p->inodes_per_block = p->blocksize / p->inodesize;
     printk("inode per block: %d inodes\n", p->inodes_per_block);
