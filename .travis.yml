@@ -1,4 +1,9 @@
 language: c
+
+before_install:
+- sudo apt-get -qq update
+- sudo apt-get install libgmp3-dev libmpfr-dev libmpc-dev
+
 script:
 - cd buildtools && bash build-cross-compiler.sh
 - export PATH=buildtools/cross-compiler/prefix/bin:$PATH && make
