@@ -11,8 +11,11 @@ QEMU_OPTS=-serial stdio -no-reboot
 
 SOURCEDIR=.
 
-C_SOURCES  := $(shell find $(SOURCEDIR) -name '*.c' -not -path "$(SOURCEDIR)/userspace/*")
-AS_SOURCES := $(shell find $(SOURCEDIR) -name '*.S' -not -path "$(SOURCEDIR)/userspace/*")
+SOURCE_FOLDERS=arch kernel drivers fs lib mm net
+
+C_SOURCES  := $(shell find $(SOURCE_FOLDERS) -name '*.c')
+AS_SOURCES  := $(shell find $(SOURCE_FOLDERS) -name '*.S')
+#AS_SOURCES := $(shell find $(SOURCEDIR) -name '*.S' -not -path "$(SOURCEDIR)/buildtools/*" -not -path "$(SOURCEDIR)/userspace/*")
 OBJS = $(sort $(subst .c,.o,$(C_SOURCES)))
 OBJS += $(sort $(subst .S,.o,$(AS_SOURCES)))
 

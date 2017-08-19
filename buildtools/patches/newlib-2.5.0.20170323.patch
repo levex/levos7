@@ -1,0 +1,1279 @@
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./config.sub ../../newlib-2.5.0.20170323/config.sub
+--- ./config.sub	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/config.sub	2017-03-26 23:57:43.000000000 -0500
+@@ -1377,6 +1377,7 @@
+	      | -*vms* | -sco* | -esix* | -isc* | -aix* | -cnk* | -sunos | -sunos[34]*\
+	      | -hpux* | -unos* | -osf* | -luna* | -dgux* | -auroraux* | -solaris* \
+	      | -sym* | -kopensolaris* | -plan9* \
++	      | -levos* \
+	      | -amigaos* | -amigados* | -msdos* | -newsos* | -unicos* | -aof* \
+	      | -aos* | -aros* | -cloudabi* | -sortix* \
+	      | -nindy* | -vxsim* | -vxworks* | -ebmon* | -hms* | -mvs* \
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/configure.host ../../newlib-2.5.0.20170323/newlib/configure.host
+--- ./newlib/configure.host	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/configure.host	2017-05-11 19:25:53.000000000 -0500
+@@ -381,6 +381,12 @@
+ 	stdio64_dir=stdio64
+ 	xdr_dir=xdr
+ 	;;
++  i[3-7]86-*-levos*)
++  	sys_dir=levos
++	posix_dir=posix
++	signal_dir=
++	newlib_cflags="${newlib_cflags} -DSIGNAL_PROVIDED"
++	;;
+   *-*-netware*)
+ 	signal_dir=
+ 	sys_dir=netware
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/include/signal.h ../../newlib-2.5.0.20170323/newlib/libc/include/signal.h
+--- ./newlib/libc/include/signal.h	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/libc/include/signal.h	2017-04-19 15:06:42.000000000 -0500
+@@ -25,7 +25,9 @@
+ int	_EXFUN(_raise_r, (struct _reent *, int));
+ 
+ #ifndef _REENT_ONLY
++#ifndef LEVOS_PROVIDES_SIGNAL
+ _sig_func_ptr _EXFUN(signal, (int, _sig_func_ptr));
++#endif
+ int	_EXFUN(raise, (int));
+ void	_EXFUN(psignal, (int, const char *));
+ #endif
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/include/sys/signal.h ../../newlib-2.5.0.20170323/newlib/libc/include/sys/signal.h
+--- ./newlib/libc/include/sys/signal.h	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/libc/include/sys/signal.h	2017-05-27 08:33:56.000000000 -0500
+@@ -252,6 +252,25 @@
+ #define SIGUSR1	18
+ #define SIGUSR2	19
+ #define NSIG    20
++#elif defined(__levos__)
++#define SIGHUP       1   	/* Hangup (POSIX) */
++#define SIGINT       2       /* Terminal interrupt (ANSI) */
++#define SIGQUIT      3       /* Terminal quit (POSIX) */
++#define SIGILL       4       /* Illegal instruction (ANSI) */
++#define SIGTRAP      5       /* Trace trap (POSIX) */
++#define SIGIOT       6       /* IOT Trap (4.2 BSD) */
++#define SIGBUS       7       /* BUS error (4.2 BSD) */
++#define SIGFPE       8       /* Floating point exception (ANSI) */
++#define SIGKILL      9       /* Kill(can't be caught or ignored) (POSIX) */
++#define SIGUSR1     10  	/* User defined signal 1 (POSIX) */
++#define SIGSEGV     11  	/* Invalid memory segment access (ANSI) */
++#define SIGUSR2     12  	/* User defined signal 2 (POSIX) */
++#define SIGPIPE     13  	/* Write on a pipe with no reader, Broken pipe (POSIX) */
++#define SIGALRM     14  	/* Alarm clock (POSIX) */
++#define SIGTERM     15  	/* Termination (ANSI) */
++#define SIGABRT     16      /* ABORT */
++#define SIGCHLD     17	    /* Child process has stopped or exited, changed (POSIX) */
++#define NSIG 18
+ #elif !defined(SIGTRAP)
+ #define	SIGHUP	1	/* hangup */
+ #define	SIGINT	2	/* interrupt */
+@@ -310,6 +329,22 @@
+ #define	SIGTTIN	26	/* to readers pgrp upon background tty read */
+ #define	SIGTTOU	27	/* like TTIN for output if (tp->t_local&LTOSTOP) */
+ #define NSIG	28	
++#elif defined(__levos__)
++//#define SIGABRT     16  /* Abort */
++#define SIGCONT     18	    /* Continue executing, if stopped (POSIX) */
++#define SIGSTOP     19	    /* Stop executing(can't be caught or ignored) (POSIX) */
++#define SIGTSTP     20	    /* Terminal stop signal (POSIX) */
++#define SIGTTIN     21	    /* Background process trying to read, from TTY (POSIX) */
++#define SIGTTOU     22	    /* Background process trying to write, to TTY (POSIX) */
++#define SIGURG      23	    /* Urgent condition on socket (4.2 BSD) */
++#define SIGXCPU     24	    /* CPU limit exceeded (4.2 BSD) */
++#define SIGXFSZ     25	    /* File size limit exceeded (4.2 BSD) */
++#define SIGVTALRM   26  /* Virtual alarm clock (4.2 BSD) */
++#define SIGPROF     27	    /* Profiling alarm clock (4.2 BSD) */
++#define SIGWINCH    28  /* Window size change (4.3 BSD, Sun) */
++#define SIGIO       29      /* I/O now possible (4.2 BSD) */
++#define SIGPWR      30      /* Power failure restart (System V) */
++#define NSIG 31
+ #else
+ #define	SIGURG	16	/* urgent condition on IO channel */
+ #define	SIGSTOP	17	/* sendable stop signal not from tty */
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/include/sys/utsname.h ../../newlib-2.5.0.20170323/newlib/libc/include/sys/utsname.h
+--- ./newlib/libc/include/sys/utsname.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/include/sys/utsname.h	2017-03-28 05:00:38.000000000 -0500
+@@ -0,0 +1,14 @@
++#ifndef _SYS_UTSNAME_H
++#define _SYS_UTSNAME_H
++
++struct uname {
++    char sysname[65];
++    char nodename[65];
++    char release[65];
++    char version[65];
++    char machine[65];
++};
++
++int uname(struct uname *);
++
++#endif /* _SYS_UTSNAME_H */
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/posix/readdir.c ../../newlib-2.5.0.20170323/newlib/libc/posix/readdir.c
+--- ./newlib/libc/posix/readdir.c	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/libc/posix/readdir.c	2017-05-12 18:04:30.000000000 -0500
+@@ -48,6 +48,14 @@
+ _DEFUN(readdir, (dirp),
+        register DIR *dirp)
+ {
++    int rc;
++
++    rc = _levos_readdir(dirp->dd_fd, dirp->dd_buf, 1);
++    if (rc)
++        return NULL;
++
++    return dirp->dd_buf;
++
+   register struct dirent *dp;
+  
+ #ifdef HAVE_DD_LOCK
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/stdlib/mallocr.c ../../newlib-2.5.0.20170323/newlib/libc/stdlib/mallocr.c
+--- ./newlib/libc/stdlib/mallocr.c	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/libc/stdlib/mallocr.c	2017-05-15 11:35:26.000000000 -0500
+@@ -610,7 +610,7 @@
+ */
+ 
+ #ifndef HAVE_MMAP
+-#define HAVE_MMAP 1
++#define HAVE_MMAP 0
+ #endif
+ 
+ /*
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/configure.in ../../newlib-2.5.0.20170323/newlib/libc/sys/configure.in
+--- ./newlib/libc/sys/configure.in	2017-03-22 05:10:15.000000000 -0500
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/configure.in	2017-05-23 08:34:37.000000000 -0500
+@@ -24,6 +24,7 @@
+   case ${sys_dir} in
+ 	a29khif) AC_CONFIG_SUBDIRS(a29khif) ;;
+ 	arm) AC_CONFIG_SUBDIRS(arm) ;;
++	levos) AC_CONFIG_SUBDIRS(levos) ;;
+ 	d10v) AC_CONFIG_SUBDIRS(d10v) ;;
+ 	decstation) AC_CONFIG_SUBDIRS(decstation) ;;
+ 	epiphany) AC_CONFIG_SUBDIRS(epiphany) ;;
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/Makefile.am ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/Makefile.am
+--- ./newlib/libc/sys/levos/Makefile.am	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/Makefile.am	2017-05-29 15:52:26.000000000 -0500
+@@ -0,0 +1,25 @@
++AUTOMAKE_OPTIONS = cygnus
++INCLUDES = $(NEWLIB_CFLAGS) $(CROSS_CFLAGS) $(TARGET_CFLAGS)
++AM_CCASFLAGS = $(INCLUDES)
++ 
++noinst_LIBRARIES = lib.a
++ 
++if MAY_SUPPLY_SYSCALLS
++extra_objs = syscalls.o term.o execvp.o crt0.o crti.o crtn.o # add more object files here if you split up
++else                    # syscalls.c into multiple files in the previous step
++extra_objs =
++endif
++ 
++lib_a_SOURCES = crti.S crtn.S
++lib_a_LIBADD = $(extra_objs)
++EXTRA_lib_a_SOURCES = syscalls.c term.c execvp.c crt0.c crti.S crtn.S# add more source files here if you split up
++lib_a_DEPENDENCIES = $(extra_objs)      # syscalls.c into multiple files
++lib_a_CCASFLAGS = $(AM_CCASFLAGS)
++lib_a_CFLAGS = $(AM_CFLAGS)
++ 
++if MAY_SUPPLY_SYSCALLS
++all: crt0.o crti.o crtn.o
++endif
++ 
++ACLOCAL_AMFLAGS = -I ../../..
++CONFIG_STATUS_DEPENDENCIES = $(newlib_basedir)/configure.host
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/configure.in ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/configure.in
+--- ./newlib/libc/sys/levos/configure.in	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/configure.in	2017-05-22 19:34:35.000000000 -0500
+@@ -0,0 +1,10 @@
++AC_PREREQ(2.59)
++AC_INIT([newlib], [NEWLIB_VERSION])
++#AC_CONFIG_SRCDIR([crt0.c])
++AC_CONFIG_SRCDIR([crt0.c])
++AC_CONFIG_SRCDIR([crti.S])
++AC_CONFIG_SRCDIR([crtn.S])
++AC_CONFIG_AUX_DIR(../../../..)
++NEWLIB_CONFIGURE(../../..)
++AC_CONFIG_FILES([Makefile])
++AC_OUTPUT
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/crt0.c ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crt0.c
+--- ./newlib/libc/sys/levos/crt0.c	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crt0.c	2017-05-25 12:03:04.000000000 -0500
+@@ -0,0 +1,23 @@
++#include <fcntl.h>
++#include <unistd.h>
++ 
++extern int main(int, char **);
++
++extern void (**__init_array_start)();
++extern void (**__init_array_end)();
++ 
++void _start(int argc, char **argvp, char **envp) {
++    int ex;
++
++    for (void (**p)() = &__init_array_start; p < &__init_array_end; ++p)
++        (*p)();
++
++    _init();
++
++    environ = envp;
++    ex = main(argc, argvp);
++
++    _fini();
++
++    exit(ex);
++}
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/crti.S ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crti.S
+--- ./newlib/libc/sys/levos/crti.S	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crti.S	2017-05-23 07:05:44.000000000 -0500
+@@ -0,0 +1,17 @@
++.section .init
++.global  _init
++.type _init, @function
++_init:
++	push %ebp
++	movl %esp, %ebp
++	# .init goes here
++
++#THIS IS BULLSHIT
++
++.section .fini
++.global  _fini
++.type _fini, @function
++_fini:
++	push %ebp
++	movl %esp, %ebp
++	# .fini goes here
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/crtn.S ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crtn.S
+--- ./newlib/libc/sys/levos/crtn.S	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/crtn.S	2017-05-22 19:03:38.000000000 -0500
+@@ -0,0 +1,9 @@
++.section .init
++	# .init goes here
++	popl %ebp
++	ret
++
++.section .fini
++	# .fini goes here
++	popl %ebp
++	ret
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/execvp.c ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/execvp.c
+--- ./newlib/libc/sys/levos/execvp.c	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/execvp.c	2017-04-25 05:48:00.000000000 -0500
+@@ -0,0 +1,61 @@
++#include <unistd.h>
++#include <dirent.h>
++#include <string.h>
++#include <errno.h>
++#include <ctype.h>
++
++#define PATH_DELIM ':'
++
++static char *
++strccpy(
++	char *s1,
++	char *s2,
++	char c)
++{
++  char *dest = s1;
++
++  while (*s2 && *s2 != c)
++    *s1++ = *s2++;
++  *s1 = 0;
++
++  return dest;
++}
++
++int execv(
++	const char *path,
++	char * const argv[])
++{
++  return execve (path, (char * const *) argv, environ);
++}
++
++int execvp(const char *file,  char * const argv[])
++{
++  char *path = getenv ("PATH");
++  char buf[MAXNAMLEN];
++
++  /* If $PATH doesn't exist, just pass FILE on unchanged.  */
++  if (!path)
++    return execv (file, argv);
++
++  /* If FILE contains a directory, don't search $PATH.  */
++  if (strchr (file, '/')
++      )
++    return execv (file, argv);
++
++  while (*path)
++    {
++      strccpy (buf, path, PATH_DELIM);
++      /* An empty entry means the current directory.  */
++      if (*buf != 0 && buf[strlen(buf) - 1] != '/')
++	strcat (buf, "/");
++      strcat (buf, file);
++      if (execv (buf, argv) == -1 && errno != ENOENT)
++	return -1;
++      while (*path && *path != PATH_DELIM)
++	path++;
++      if (*path == PATH_DELIM)
++	path++;			/* skip over delim */
++    }
++
++  return -1;
++}
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/ssy ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/ssy
+--- ./newlib/libc/sys/levos/ssy	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/ssy	2017-05-11 19:36:49.000000000 -0500
+@@ -0,0 +1,60 @@
++/* libc/sys/linux/sys/dirent.h - Directory entry as returned by readdir */
++
++/* Written 2000 by Werner Almesberger */
++
++
++#ifndef _SYS_DIRENT_H
++#define _SYS_DIRENT_H
++
++#include <sys/types.h>
++#include <bits/dirent.h>
++#define _LIBC 1
++#define  NOT_IN_libc 1
++#include <sys/lock.h>
++#undef _LIBC
++
++#define HAVE_NO_D_NAMLEN	/* no struct dirent->d_namlen */
++#define HAVE_DD_LOCK  		/* have locking mechanism */
++
++#define MAXNAMLEN 255		/* sizeof(struct dirent.d_name)-1 */
++
++
++typedef struct {
++    int dd_fd;		/* directory file */
++    int dd_loc;		/* position in buffer */
++    int dd_seek;
++    char *dd_buf;	/* buffer */
++    int dd_len;		/* buffer length */
++    int dd_size;	/* amount of data in buffer */
++    _LOCK_RECURSIVE_T dd_lock;
++} DIR;
++
++
++#define __dirfd(dir) (dir)->dd_fd
++
++/* --- redundant --- */
++
++DIR *opendir(const char *);
++struct dirent *readdir(DIR *);
++int readdir_r(DIR *__restrict, struct dirent *__restrict,
++              struct dirent **__restrict);
++void rewinddir(DIR *);
++int closedir(DIR *);
++
++/* internal prototype */
++void _seekdir(DIR *dir, long offset);
++DIR *_opendir(const char *);
++
++#ifndef _POSIX_SOURCE
++long telldir (DIR *);
++void seekdir (DIR *, off_t loc);
++
++int scandir (const char *__dir,
++             struct dirent ***__namelist,
++             int (*select) (const struct dirent *),
++             int (*compar) (const struct dirent **, const struct dirent **));
++
++int alphasort (const struct dirent **__a, const struct dirent **__b);
++#endif /* _POSIX_SOURCE */
++
++#endif
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/sys/dirent.h ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/dirent.h
+--- ./newlib/libc/sys/levos/sys/dirent.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/dirent.h	2017-05-11 19:51:37.000000000 -0500
+@@ -0,0 +1,60 @@
++#ifndef __LEVOS_DIRENT_H
++#define __LEVOS_DIRENT_H
++
++#include <sys/types.h>
++
++struct dirent {
++    long  d_ino;              /* inode number */
++    off_t d_off;              /* offset to this old_linux_dirent */
++    unsigned short d_reclen;  /* length of this d_name */
++    char  d_name[255]; /* filename (null-terminated) */
++};
++
++//int readdir(int, struct dirent *, int);
++
++/* LINUX */
++
++#define HAVE_NO_D_NAMLEN	/* no struct dirent->d_namlen */
++#define HAVE_DD_LOCK  		/* have locking mechanism */
++
++#define MAXNAMLEN 255		/* sizeof(struct dirent.d_name)-1 */
++
++
++typedef struct {
++    int dd_fd;		/* directory file */
++    int dd_loc;		/* position in buffer */
++    int dd_seek;
++    char *dd_buf;	/* buffer */
++    int dd_len;		/* buffer length */
++    int dd_size;	/* amount of data in buffer */
++    _LOCK_RECURSIVE_T dd_lock;
++} DIR;
++
++#define __dirfd(dir) (dir)->dd_fd
++
++/* --- redundant --- */
++
++DIR *opendir(const char *);
++struct dirent *readdir(DIR *);
++int readdir_r(DIR *__restrict, struct dirent *__restrict,
++              struct dirent **__restrict);
++void rewinddir(DIR *);
++int closedir(DIR *);
++
++/* internal prototype */
++void _seekdir(DIR *dir, long offset);
++DIR *_opendir(const char *);
++
++#ifndef _POSIX_SOURCE
++long telldir (DIR *);
++void seekdir (DIR *, off_t loc);
++
++int scandir (const char *__dir,
++             struct dirent ***__namelist,
++             int (*select) (const struct dirent *),
++             int (*compar) (const struct dirent **, const struct dirent **));
++
++int alphasort (const struct dirent **__a, const struct dirent **__b);
++#endif /* _POSIX_SOURCE */
++
++#endif /* __LEVOS_DIRENT_H */
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/sys/mman.h ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/mman.h
+--- ./newlib/libc/sys/levos/sys/mman.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/mman.h	2017-05-30 05:29:14.000000000 -0500
+@@ -0,0 +1,22 @@
++#ifndef __LEVOS_SYS_MMAN_H
++#define __LEVOS_SYS_MMAN_H
++
++#include <sys/types.h>
++
++#define PROT_EXEC (1 << 0)
++#define PROT_WRITE (1 << 1)
++#define PROT_READ (1 << 2)
++#define PROT_NONE 0
++
++#define MAP_SHARED (1 << 0)
++#define MAP_PRIVATE (1 << 1)
++#define MAP_FIXED   (1 << 2)
++#define MAP_ANON    (1 << 3)
++#define MAP_ANONYMOUS MAP_ANON
++
++#define MAP_FAILED ((void *)-1)
++
++void  *mmap(void *, size_t, int, int, int, off_t);
++int    munmap(void *, size_t);
++
++#endif
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/sys/socket.h ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/socket.h
+--- ./newlib/libc/sys/levos/sys/socket.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/socket.h	2017-04-16 14:27:35.000000000 -0500
+@@ -0,0 +1,34 @@
++#ifndef _SYS_SOCKET_H
++#define _SYS_SOCKET_H
++
++#include <stdint.h>
++
++#define AF_UNIX 0
++#define AF_LOCAL AF_UNIX
++#define AF_INET 1
++
++#define SOCK_STREAM 0
++#define SOCK_DGRAM  1
++
++typedef size_t socklen_t;
++typedef int sa_family_t;
++
++struct in_addr {
++    uint32_t s_addr;
++};
++
++struct sockaddr_in {
++	sa_family_t	sin_family;
++	in_port_t	sin_port;
++	struct	in_addr sin_addr;
++};
++
++struct sockaddr {
++	sa_family_t	sa_family;	/* address family */
++	char		sa_data[14];	/* actually longer; address value */
++};
++
++int socket(int, int, int);
++int connect(int, const struct sockaddr *, socklen_t);
++
++#endif /* _SYS_SOCKET_H */
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/sys/termios.h ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/termios.h
+--- ./newlib/libc/sys/levos/sys/termios.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/sys/termios.h	2017-06-21 19:34:20.000000000 -0500
+@@ -0,0 +1,189 @@
++#pragma once
++
++/* Technically part of ioctl */
++struct winsize {
++	unsigned short ws_row;
++	unsigned short ws_col;
++	unsigned short ws_xpixel;
++	unsigned short ws_ypixel;
++};
++
++typedef unsigned int tcflag_t;
++typedef unsigned int speed_t;
++typedef unsigned char cc_t;
++
++/* reserving 0 for particular reason */
++#define VEOF     1 /* ^D (end of file) */
++#define VEOL     2 /* NULL (end of line) */
++#define VERASE   3 /* ^H (backspace/del) */
++#define VINTR    4 /* ^C (interrupt) */
++#define VKILL    5 /* ^U (erase input buffer) */
++#define VMIN     6 /* minimum number of characters for non-canonical read */
++#define VQUIT    7 /* ^\ send SIGQUIT */
++#define VSTART   8 /* ^Q restart STOPped input */
++#define VSTOP    9 /* ^S stop input */
++#define VSUSP   10 /* ^Z suspend foreground applicatioan (send SIGTSTP) */
++#define VTIME   11 /* Timeout for non-canonical read, deciseconds */
++#define VWERASE 12
++
++/* flags for input modes */
++#define BRKINT  0000001
++#define ICRNL   0000002
++#define IGNBRK  0000004
++#define IGNCR   0000010
++#define IGNPAR  0000020
++#define INLCR   0000040
++#define INPCK   0000100
++#define ISTRIP  0000200
++#define IUCLC   0000400
++#define IXANY   0001000
++#define IXOFF   0002000
++#define IXON    0004000
++#define PARMRK  0010000
++
++/* flags for output modes */
++#define OPOST   0000001
++#define OLCUC   0000002
++#define ONLCR   0000004
++#define OCRNL   0000010
++#define ONOCR   0000020
++#define ONLRET  0000040
++#define OFILL   0000100
++#define OFDEL   0000200
++#define NLDLY   0000400
++#define   NL0   0000000
++#define   NL1   0000400
++#define CRDLY   0003000
++#define   CR0   0000000
++#define   CR1   0001000
++#define   CR2   0002000
++#define   CR3   0003000
++#define TABDLY  0014000
++#define   TAB0  0000000
++#define   TAB1  0004000
++#define   TAB2  0010000
++#define   TAB3  0014000
++#define BSDLY   0020000
++#define   BS0   0000000
++#define   BS1   0020000
++#define FFDLY   0100000
++#define   FF0   0000000
++#define   FF1   0100000
++#define VTDLY   0040000
++#define   VT0   0000000
++#define   VT1   0040000
++
++/* baud rates */
++#define B0      0000000
++#define B50     0000001
++#define B75     0000002
++#define B110    0000003
++#define B134    0000004
++#define B150    0000005
++#define B200    0000006
++#define B300    0000007
++#define B600    0000010
++#define B1200   0000011
++#define B1800   0000012
++#define B2400   0000013
++#define B4800   0000014
++#define B9600   0000015
++#define B19200  0000016
++#define B38400  0000017
++
++/* control modes */
++#define CSIZE   0000060
++#define   CS5   0000000
++#define   CS6   0000020
++#define   CS7   0000040
++#define   CS8   0000060
++#define CSTOPB  0000100
++#define CREAD   0000200
++#define PARENB  0000400
++#define PARODD  0001000
++#define HUPCL   0002000
++#define CLOCAL  0004000
++
++/* local modes */
++#define ISIG    0000001
++#define ICANON  0000002
++#define XCASE   0000004
++#define ECHO    0000010
++#define ECHOE   0000020
++#define ECHOK   0000040
++#define ECHONL  0000100
++#define NOFLSH  0000200
++#define TOSTOP  0000400
++#define IEXTEN  0001000
++
++/* attributes */
++#define TCSANOW   0x0001
++#define TCSADRAIN 0x0002
++#define TCSAFLUSH 0x0004
++
++#define TCIFLUSH  0x0001
++#define TCIOFLUSH 0x0003
++#define TCOFLUSH  0x0002
++
++#define TCIOFF    0x0001
++#define TCION     0x0002
++#define TCOOFF    0x0004
++#define TCOON     0x0008
++
++#define NCCS 32
++
++struct termios {
++	tcflag_t c_iflag;
++	tcflag_t c_oflag;
++	tcflag_t c_cflag;
++	tcflag_t c_lflag;
++	cc_t     c_cc[NCCS];
++};
++
++/* ioctl commands */
++
++#define TCGETS   0x4000 /* Get termios struct */
++#define TCSETS   0x4001 /* Set termios struct */
++#define TCSETSW  0x4002 /* Set, but let drain first */
++#define TCSETSF  0x4003 /* Set, but let flush first */
++
++#define TCGETA   TCGETS
++#define TCSETA   TCSETS
++#define TCGETAW  TCGETSW
++#define TCGETAF  TCGETSF
++
++#define TCSBRK   0x4004
++#define TCXONC   0x4005
++#define TCFLSH   0x4006
++
++#define TIOCEXCL     0x4007
++#define TIOCNXCL     0x4008
++#define TIOCSCTTY    0x4009
++#define TIOCGPGRP    0x400A
++#define TIOCSPGRP    0x400B
++#define TIOCOUTQ     0x400C
++#define TIOCSTI      0x400D
++#define TIOCGWINSZ   0x400E
++#define TIOCSWINSZ   0x400F
++#define TIOCMGET     0x4010
++#define TIOCMBIS     0x4011
++#define TIOCMBIC     0x4012
++#define TIOCMSET     0x4013
++#define TIOCGSOFTCAR 0x4014
++#define TIOCSSOFTCAR 0x4015
++#define TIOCNOTTY    0x5422
++
++/* termios functions */
++speed_t cfgetispeed(const struct termios *);
++speed_t cfgetospeed(const struct termios *);
++int     cfsetispeed(struct termios *, speed_t);
++int     cfsetospeed(struct termios *, speed_t);
++int     tcdrain(int);
++int     tcflow(int, int);
++int     tcflush(int, int);
++int     tcgetattr(int, struct termios *);
++pid_t   tcgetsid(int);
++int     tcsendbreak(int, int);
++int     tcsetattr(int, int, struct termios *);
++int     ioctl(int, int, void*);
++
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/syscalls.c ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/syscalls.c
+--- ./newlib/libc/sys/levos/syscalls.c	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/syscalls.c	2017-06-03 16:35:56.000000000 -0500
+@@ -0,0 +1,488 @@
++/* note these headers are all provided by newlib - you don't need to provide them */
++#define _GNU_SOURCE
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <sys/fcntl.h>
++#include <sys/times.h>
++#include <sys/errno.h>
++#include <sys/time.h>
++#include <sys/utsname.h>
++#include <sys/socket.h>
++#include <stdio.h>
++#include <stdarg.h>
++#define LEVOS_PROVIDES_SIGNAL
++#include <signal.h>
++#include <dirent.h>
++
++#define DO_RET(ret) \
++    if (ret < 0) { \
++        errno = ret * (-1); \
++        ret = -1; \
++    } 
++
++//char **environ = NULL; /* pointer to array of char * strings that define the current environment variables */
++ 
++/*void _exit()
++{
++    asm volatile("int $0x80"::"a"(0x01),"b"(0x0));
++}*/
++void _exit(int err)
++{
++    asm volatile("int $0x80"::"a"(0x01),"b"(err));
++}
++int close(int file)
++{
++    int ret = 0;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x06),"b"(file));
++    DO_RET(ret);
++    return ret;
++}
++int _execve(char *name, char **argv, char **env)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x0B),"b"(name), "c"(argv),"d"(env));
++    DO_RET(ret);
++    return ret;
++}
++int fork()
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x02));
++    DO_RET(ret);
++    return ret;
++}
++int fstat(int file, struct stat *st)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x1c),"b"(file),"c"(st));
++    DO_RET(ret);
++    return ret;
++}
++int getpid()
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x14));
++    DO_RET(ret);
++    return ret;
++}
++int _isatty(int file)
++{
++    struct stat st;
++    int rc;
++
++    rc = fstat(file, &st);
++    if (rc)
++        return rc;
++
++    if (S_ISCHR(st.st_mode))
++        return 1;
++
++    errno = ENOTTY;
++    return 0;
++}
++int kill(int pid, int sig)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x25),"b"(pid),"c"(sig));
++    DO_RET(ret);
++    return ret;
++}
++
++int killpg(int pgrp, int sig)
++{
++    return kill(-pgrp, sig);
++}
++
++int raise(int sig)
++{
++    return kill(getpid(), sig);
++}
++int link(char *old, char *new)
++{
++    errno = ENOSYS;
++    return -1;
++}
++int lseek(int file, int ptr, int dir)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x13),"b"(file),"c"(ptr),"d"(dir));
++    DO_RET(ret);
++    return ret;
++}
++int _levos_open(const char *name, int flags, mode_t mode) 
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x5),"b"(name),"c"(flags),"d"(mode));
++    DO_RET(ret);
++    return ret;
++}
++int open(const char *name, int flags, ...)
++{
++    va_list vl;
++    va_start(vl, flags);
++    mode_t mode = va_arg(vl, mode_t);
++    va_end(vl);
++
++    return _levos_open(name, flags, mode);
++}
++int read(int file, char *ptr, int len)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x3),"b"(file),"c"(ptr),"d"(len));
++    DO_RET(ret);
++    return ret;
++}
++caddr_t sbrk(int incr)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x23),"b"(incr));
++    DO_RET(ret);
++    return ret;
++}
++int stat(const char *file, struct stat *st)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x12),"b"(file),"c"(st));
++    DO_RET(ret);
++    return ret;
++}
++int lstat(const char *pathname, struct stat *statbuf)
++{
++    /* XXX */
++    return stat(pathname, statbuf);
++}
++clock_t times(struct tms *buf)
++{
++    errno = ENOSYS;
++    return -1;
++}
++int unlink(char *name)
++{
++    errno = ENOSYS;
++    return -1;
++}
++int waitpid(pid_t pid, int *wstatus, int opts)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x07),"b"(pid),"c"(wstatus),"d"(opts));
++    DO_RET(ret);
++    return ret;
++}
++int wait(int *status)
++{
++    return waitpid(-1, status, 0);
++}
++int write(int file, char *ptr, int len)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x04),"b"(file),"c"(ptr),"d"(len));
++    DO_RET(ret);
++    return ret;
++}
++int gettimeofday(struct timeval *p, void *z)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x4e),"b"(p),"c"(z));
++    DO_RET(ret);
++    return ret;
++}
++
++int uname(struct uname *buf)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x6d),"b"(buf));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++socket(int domain, int family, int proto)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x11),"b"(domain),"c"(family),"d"(proto));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++connect(int sockfd, const struct sockaddr *addr, socklen_t len)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x1f),"b"(sockfd),"c"(addr),"d"(len));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++dup(int fd)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x29),"b"(fd));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++dup2(int fd, int to)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x3f),"b"(fd), "c"(to));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++_levos_readdir(int fd, struct dirent *dir, int count)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x59),"b"(fd), "c"(dir), "d"(count));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++signal(int num, sighandler_t handler)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x30),"b"(num), "c"(handler));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++pipe(int *fildes)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x2a),"b"(fildes));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++chdir(char *fn)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x0C),"b"(fn));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++__fcntl(int fd, int cmd, void *arg)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x37),"b"(fd), "c"(cmd),"d"(arg));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++fcntl(int fd, int cmd, ...)
++{
++    va_list vl;
++    va_start(vl, cmd);
++    int val = va_arg(vl, int);
++    va_end(vl);
++
++    return __fcntl(fd, cmd, val);
++}
++
++char *
++getcwd(char *buf, unsigned long size)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0xb7),"b"(buf),"c"(size));
++    DO_RET(ret);
++    if (ret == -1) {
++        return NULL;
++    } else return buf;
++
++}
++
++static mode_t __global_umask = 0777;
++mode_t umask(mode_t mask)
++{
++    mode_t old = __global_umask;
++
++    __global_umask = mask & 0777;
++
++    return old;
++}
++
++int chmod(const char *pathname, mode_t mode)
++{
++    errno = ENOSYS;
++    return -1;
++}
++
++long
++sysconf(int req)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x2c),"b"(req));
++    DO_RET(ret);
++    return ret;
++}
++
++int access(const char *pathname, int mode)
++{
++    struct stat st;
++    int rc;
++
++    rc = stat(pathname, &st);
++    if (rc == -1)
++        return -1;
++
++    return 0;
++}
++
++int utime(const char *filename, const struct utimbuf *times)
++{
++    /* FIXME */
++    return access(filename, 0);
++}
++
++int chown(const char *pathname, uid_t owner, gid_t group)
++{
++    /* FIXME */
++    return access(pathname, 0);
++}
++
++int rmdir(const char *fn)
++{
++    /* FIXME */
++    return access(fn, 0);
++}
++
++int alarm(int secs)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x1b),"b"(secs));
++    DO_RET(ret);
++    return ret;
++}
++
++int sleep(int secs)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0xa2),"b"(secs));
++    DO_RET(ret);
++    return ret;
++}
++
++int usleep(int micros)
++{
++    int secs = micros / 1000000;
++    return sleep(secs == 0 ? 1 : secs);
++}
++
++int ioctl(int fd, int cmd, int arg)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x36),"b"(fd),"c"(cmd),"d"(arg));
++    DO_RET(ret);
++    return ret;
++}
++
++struct mmap_arg_struct {
++    void *addr;
++    size_t len;
++    int prot;
++    int flags;
++    int fd;
++    off_t offset;
++};
++
++void *mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset)
++{
++    struct mmap_arg_struct arg;
++    arg.addr = addr;
++    arg.len = len;
++    arg.prot = prot;
++    arg.flags = flags;
++    arg.fd = fd;
++    arg.offset = offset;
++
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x5a),"b"(&arg));
++    DO_RET(ret);
++    return ret;
++}
++
++int munmap(void *addr, size_t len)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x5b),"b"(addr),"c"(len));
++    DO_RET(ret);
++    return ret;
++}
++
++int mkdir(const char *path, mode_t mode)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x27),"b"(path),"c"(mode));
++    DO_RET(ret);
++    return ret;
++}
++
++uid_t
++getuid(void)
++{
++    return 0;
++}
++
++uid_t
++geteuid(void)
++{
++    return getuid();
++}
++
++uid_t
++getgid(void)
++{
++    return 0;
++}
++
++pid_t getpgid(pid_t pid)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x84),"b"(pid));
++    DO_RET(ret);
++    return ret;
++}
++
++pid_t getpgrp(void)
++{
++    return getpgid(getpid());
++}
++
++uid_t
++getegid(void)
++{
++    return getgid();
++}
++
++pid_t getppid(void)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x40));
++    DO_RET(ret);
++    return ret;
++}
++
++int setpgid(pid_t pid, pid_t pgid)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x39),"b"(pid),"c"(pgid));
++    DO_RET(ret);
++    return ret;
++}
++
++int
++sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
++{
++    int ret;
++    asm volatile("int $0x80":"=a"(ret):"a"(0x7e),"b"(how),"c"(set),"d"(oldset));
++    DO_RET(ret);
++    return ret;
++}
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/term.c ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/term.c
+--- ./newlib/libc/sys/levos/term.c	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/term.c	2017-06-12 06:31:40.000000000 -0500
+@@ -0,0 +1,43 @@
++#include <unistd.h>
++#include <termios.h>
++
++typedef unsigned int speed_t;
++
++int tcgetattr(int fd, struct termios *termios_p)
++{
++    /* XXX: should be mostly correct, but needs checking */
++    return ioctl(fd, 0x5401, termios_p);
++}
++
++int tcsetattr(int fd, int optional_actions,
++              const struct termios *termios_p)
++{
++    /* XXX: not entirely correct */
++    return ioctl(fd, 0x5402, termios_p);
++}
++
++int tcsetpgrp(int fildes, pid_t pgid_id)
++{
++    return ioctl(fildes, 0x5410, &pgid_id);
++}
++
++pid_t tcgetpgrp(int fildes)
++{
++    pid_t pid;
++    if (ioctl(fildes, 0x540F, &pid) == -1)
++        return -1;
++
++    return pid;
++}
++
++int tcflush(int fd, int queue_selector)
++{
++    return ioctl(fd, 0x540B, queue_selector);
++}
++
++speed_t
++cfgetospeed(const struct termios *termios_p)
++{
++    /* XXX */
++    return 0000016;
++}
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure ./newlib/libc/sys/levos/termios.h ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/termios.h
+--- ./newlib/libc/sys/levos/termios.h	1969-12-31 18:00:00.000000000 -0600
++++ ../../newlib-2.5.0.20170323/newlib/libc/sys/levos/termios.h	2017-04-24 16:28:24.000000000 -0500
+@@ -0,0 +1,31 @@
++#ifndef __LEVOS_TERMIOS_H
++#define __LEVOS_TERMIOS_H
++
++#define TCGETS		0x5401
++#define TCSETS		0x5402
++#define TCSETSW		0x5403
++#define TCSETSF		0x5404
++#define TCGETA		0x5405
++#define TCSETA		0x5406
++#define TCSETAW		0x5407
++#define TCSETAF		0x5408
++#define TCSBRK		0x5409
++#define TCXONC		0x540A
++#define TCFLSH		0x540B
++#define TIOCEXCL	0x540C
++#define TIOCNXCL	0x540D
++#define TIOCSCTTY	0x540E
++#define TIOCGPGRP	0x540F
++#define TIOCSPGRP	0x5410
++#define TIOCOUTQ	0x5411
++#define TIOCSTI		0x5412
++#define TIOCGWINSZ	0x5413
++#define TIOCSWINSZ	0x5414
++#define TIOCMGET	0x5415
++#define TIOCMBIS	0x5416
++#define TIOCMBIC	0x5417
++#define TIOCMSET	0x5418
++#define TIOCGSOFTCAR	0x5419
++#define TIOCSSOFTCAR	0x541A
++
++#endif

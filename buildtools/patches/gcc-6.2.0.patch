@@ -1,0 +1,156 @@
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./config.sub /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/config.sub
+--- ./config.sub	2015-12-31 15:13:28.000000000 -0600
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/config.sub	2017-04-18 10:43:58.000000000 -0500
+@@ -1378,7 +1378,7 @@
+ 	      | -hpux* | -unos* | -osf* | -luna* | -dgux* | -auroraux* | -solaris* \
+ 	      | -sym* | -kopensolaris* | -plan9* \
+ 	      | -amigaos* | -amigados* | -msdos* | -newsos* | -unicos* | -aof* \
+-	      | -aos* | -aros* | -cloudabi* | -sortix* \
++	      | -aos* | -aros* | -cloudabi* | -sortix* | -levos* \
+ 	      | -nindy* | -vxsim* | -vxworks* | -ebmon* | -hms* | -mvs* \
+ 	      | -clix* | -riscos* | -uniplus* | -iris* | -rtu* | -xenix* \
+ 	      | -hiux* | -386bsd* | -knetbsd* | -mirbsd* | -netbsd* \
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./fixincludes/mkfixinc.sh /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/fixincludes/mkfixinc.sh
+--- ./fixincludes/mkfixinc.sh	2015-04-22 09:18:16.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/fixincludes/mkfixinc.sh	2017-04-18 10:49:24.000000000 -0500
+@@ -15,6 +15,7 @@
+     i?86-*-mingw32* | \
+     x86_64-*-mingw32* | \
+     i?86-*-interix* | \
++    *-levos* | \
+     powerpc-*-eabisim* | \
+     powerpc-*-eabi*    | \
+     powerpc-*-rtems*   | \
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./gcc/config/levos.h /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/config/levos.h
+--- ./gcc/config/levos.h	1969-12-31 18:00:00.000000000 -0600
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/config/levos.h	2017-05-23 09:24:31.000000000 -0500
+@@ -0,0 +1,34 @@
++/* Useful if you wish to make target-specific GCC changes. */
++#undef TARGET_LEVOS
++#define TARGET_LEVOS 1
++ 
++/* Default arguments you want when running your
++   i686-levos-gcc/x86_64-levos-gcc toolchain */
++//#define LIB_SPEC "-lc -lg -lm -lnosys" /* link against C standard library */
++#define LIB_SPEC "-lc" /* link against C standard library */
++ 
++/* Files that are linked before user code.
++   The %s tells GCC to look for these files in the library directory. */
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC "crt0.o%s crti.o%s crtbegin.o%s"
++ 
++/* Files that are linked after user code. */
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC "crtend.o%s crtn.o%s"
++ 
++/* Don't automatically add extern "C" { } around header files. */
++#undef  NO_IMPLICIT_EXTERN_C
++#define NO_IMPLICIT_EXTERN_C 1
++
++#undef HAVE_SYS_SDT_H
++ 
++/* Additional predefined macros. */
++#undef TARGET_OS_CPP_BUILTINS
++#define TARGET_OS_CPP_BUILTINS()      \
++  do {                                \
++    builtin_define ("__levos__");      \
++    builtin_define ("__unix__");      \
++    builtin_assert ("system=levos");   \
++    builtin_assert ("system=unix");   \
++    builtin_assert ("system=posix");   \
++  } while(0);
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./gcc/config.gcc /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/config.gcc
+--- ./gcc/config.gcc	2016-06-08 08:34:25.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/config.gcc	2017-05-23 07:10:45.000000000 -0500
+@@ -642,6 +642,12 @@
+     "" | yes | posix) thread_file='posix' ;;
+   esac
+   ;;
++*-*-levos*)
++  extra_parts="crtbegin.o crtend.o"
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  ;;
+ *-*-dragonfly*)
+   gas=yes
+   gnu_ld=yes
+@@ -907,6 +913,12 @@
+ esac
+ 
+ case ${target} in
++i[34567]86-*-levos*)
++    tm_file="${tm_file} i386/unix.h i386/att.h dbxelf.h elfos.h glibc-stdint.h i386/i386elf.h levos.h"
++    ;;
++x86_64-*-levos*)
++    tm_file="${tm_file} i386/unix.h i386/att.h dbxelf.h elfos.h glibc-stdint.h i386/i386elf.h i386/x86-64.h levos.h"
++    ;;
+ aarch64*-*-elf | aarch64*-*-rtems*)
+ 	tm_file="${tm_file} dbxelf.h elfos.h newlib-stdint.h"
+ 	tm_file="${tm_file} aarch64/aarch64-elf.h aarch64/aarch64-elf-raw.h"
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./gcc/gcc.c /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/gcc.c
+--- ./gcc/gcc.c	2016-08-15 06:19:34.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/gcc/gcc.c	2017-05-12 21:03:00.000000000 -0500
+@@ -9512,6 +9512,8 @@
+   unsigned HOST_WIDE_INT ret = 0;
+   int fd; 
+ 
++  return ret;
++#if 0
+   fd = open ("/dev/urandom", O_RDONLY); 
+   if (fd >= 0)
+     {
+@@ -9539,6 +9541,7 @@
+ #endif
+ 
+   return ret ^ getpid ();
++#endif
+ }
+ 
+ /* %:compare-debug-dump-opt spec function.  Save the last argument,
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./libgcc/config.host /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libgcc/config.host
+--- ./libgcc/config.host	2016-05-17 01:15:52.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libgcc/config.host	2017-05-23 12:21:22.000000000 -0500
+@@ -333,6 +333,14 @@
+ 	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
+ 	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
+ 	;;
++i[34567]86-*-levos*)
++	extra_parts="$extra_parts crtbegin.o crtend.o"
++	tmake_file="$tmake_file i386/t-crtstuff t-libgcc-pic"
++	;;
++x86_64-*-levos*)
++	extra_parts="$extra_parts crtbegin.o crtend.o"
++	tmake_file="$tmake_file i386/t-crtstuff t-crtstuff-pic t-libgcc-pic"
++	;;
+ aarch64*-*-linux*)
+ 	extra_parts="$extra_parts crtfastmath.o"
+ 	md_unwind_header=aarch64/linux-unwind.h
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./libiberty/strsignal.c /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libiberty/strsignal.c
+--- ./libiberty/strsignal.c	2008-06-19 10:08:53.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libiberty/strsignal.c	2017-05-11 19:19:59.000000000 -0500
+@@ -551,7 +551,7 @@
+ #ifndef HAVE_PSIGNAL
+ 
+ void
+-psignal (int signo, char *message)
++psignal (int signo, const char *message)
+ {
+   if (signal_names == NULL)
+     {
+diff -uNr --exclude autom4te.cache --exclude Makefile.in --exclude aclocal.m4 --exclude configure --exclude 'gmp*' --exclude 'isl*' --exclude 'mpfr*' --exclude 'mpc*' ./libstdc++-v3/crossconfig.m4 /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libstdc++-v3/crossconfig.m4
+--- ./libstdc++-v3/crossconfig.m4	2015-10-11 17:34:28.000000000 -0500
++++ /Users/kurusalevente/dev/levos7-toolchain/gcc-6.2.0/libstdc++-v3/crossconfig.m4	2017-04-18 10:47:56.000000000 -0500
+@@ -27,6 +27,12 @@
+     AC_DEFINE(HAVE_MODF)
+     AC_DEFINE(HAVE_SQRTF)
+     ;;
++  *-levos*)
++    GLIBCXX_CHECK_COMPILER_FEATURES
++    GLIBCXX_CHECK_LINKER_FEATURES
++    GLIBCXX_CHECK_MATH_SUPPORT
++    GLIBCXX_CHECK_STDLIB_SUPPORT
++    ;;
+ 
+   spu-*-elf*)
+     GLIBCXX_CHECK_COMPILER_FEATURES
