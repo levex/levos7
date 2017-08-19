@@ -6,6 +6,6 @@ before_install:
 
 script:
 - cd buildtools && bash build-cross-compiler.sh
-- export PATH=buildtools/cross-compiler/prefix/bin:$PATH && make
+- export PATH=buildtools/cross-compiler/prefix/bin:$PATH && cd /home/travis/build/levex/levos7 && make
 
 install: true
