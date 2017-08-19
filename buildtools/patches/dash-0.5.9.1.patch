@@ -1,0 +1,121 @@
+diff --git a/src/bltin/test.c b/src/bltin/test.c
+index 58c05fe..32254a0 100644
+--- a/src/bltin/test.c
++++ b/src/bltin/test.c
+@@ -558,10 +558,12 @@ bash_group_member(gid_t gid)
+ 	if (gid == getgid() || gid == getegid())
+ 		return (1);
+ 
+-	ngroups = getgroups(0, NULL);
++	//ngroups = getgroups(0, NULL);
++    ngroups = 1;
+ 	group_array = stalloc(ngroups * sizeof(gid_t));
+-	if ((getgroups(ngroups, group_array)) != ngroups)
+-		return (0);
++    memset(group_array, 0, sizeof(gid_t));
++	//if ((getgroups(ngroups, group_array)) != ngroups)
++		//return (0);
+ 
+ 	/* Search through the list looking for GID. */
+ 	for (i = 0; i < ngroups; i++)
+diff --git a/src/jobs.c b/src/jobs.c
+index 4f02e38..581a484 100644
+--- a/src/jobs.c
++++ b/src/jobs.c
+@@ -46,7 +46,12 @@
+ #include <sys/time.h>
+ #include <sys/resource.h>
+ #endif
+-#include <sys/ioctl.h>
++#include <sys/signal.h>
++#define SIGTTIN 21
++#define SIGTTOU 22
++#define SIGTSTP 20
++#define SIGCONT 18
++//#include <sys/ioctl.h>
+ 
+ #include "shell.h"
+ #if JOBS
+@@ -1138,7 +1143,8 @@ waitproc(int block, int *status)
+ 
+ 	do {
+ 		gotsigchld = 0;
+-		err = wait3(status, flags, NULL);
++		//err = wait3(status, flags, NULL);
++        err = waitpid(-1, status, flags);
+ 		if (err || !block)
+ 			break;
+ 
+@@ -1147,8 +1153,10 @@ waitproc(int block, int *status)
+ 		sigfillset(&mask);
+ 		sigprocmask(SIG_SETMASK, &mask, &oldmask);
+ 
+-		while (!gotsigchld && !pendingsigs)
+-			sigsuspend(&oldmask);
++		while (!gotsigchld && !pendingsigs) {
++			//sigsuspend(&oldmask);
++            sleep(1);
++        }
+ 
+ 		sigclearmask();
+ 	} while (gotsigchld);
+diff --git a/src/output.c b/src/output.c
+index 4d3b4c2..53e821f 100644
+--- a/src/output.c
++++ b/src/output.c
+@@ -45,7 +45,7 @@
+ 
+ #include <sys/types.h>		/* quad_t */
+ #include <sys/param.h>		/* BSD4_4 */
+-#include <sys/ioctl.h>
++//#include <sys/ioctl.h>
+ 
+ #include <stdio.h>	/* defines BUFSIZ */
+ #include <string.h>
+diff --git a/src/system.h b/src/system.h
+index a8d09b3..5e163da 100644
+--- a/src/system.h
++++ b/src/system.h
+@@ -82,7 +82,7 @@ void *bsearch(const void *, const void *, size_t, size_t,
+ 	      int (*)(const void *, const void *));
+ #endif
+ 
+-#ifndef HAVE_KILLPG
++#if !defined(HAVE_KILLPG) && !defined(__levos__)
+ static inline int killpg(pid_t pid, int signal)
+ {
+ #ifdef DEBUG
+diff --git a/src/trap.c b/src/trap.c
+index edb9938..831fdca 100644
+--- a/src/trap.c
++++ b/src/trap.c
+@@ -33,6 +33,9 @@
+  */
+ 
+ #include <signal.h>
++#define SIGTTIN 21
++#define SIGTTOU 22
++#define SIGTSTP 20
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -226,7 +229,8 @@ setsignal(int signo)
+ 		/*
+ 		 * current setting unknown
+ 		 */
+-		if (sigaction(signo, 0, &act) == -1) {
++		//if (sigaction(signo, 0, &act) == -1) {
++        if (1) {
+ 			/*
+ 			 * Pretend it worked; maybe we should give a warning
+ 			 * here, but other shells don't. We don't alter
+@@ -259,7 +263,8 @@ setsignal(int signo)
+ 	*t = action;
+ 	act.sa_flags = 0;
+ 	sigfillset(&act.sa_mask);
+-	sigaction(signo, &act, 0);
++	//sigaction(signo, &act, 0);
++    signal(signo, act.sa_handler);
+ }
+ 
+ /*
