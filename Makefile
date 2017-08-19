@@ -48,8 +48,13 @@ CFLAGS += -g -msse2
 	@echo "  AS       $@"
 	@$(AS) -g -c $< -o $@
 
+Make.dep:
+	makedepend -f Make.dep -Iinclude $(C_SOURCES)
+
 depend:
 	makedepend -f Make.dep -Iinclude $(C_SOURCES)
+
+.PHONY: depend
 
 $(KERN_NAME): $(OBJS)
 	@echo "  LD       $@"
@@ -68,4 +73,6 @@ clean:
 	-@rm $(OBJS) >/dev/null 2>&1|| true
 	-@rm $(KERN_NAME) >/dev/null 2>&1 || true
 
+ifeq ("$(wildcard Make.dep)","")
 include Make.dep
+endif
