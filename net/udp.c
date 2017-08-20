@@ -168,6 +168,10 @@ do_udp_handle_packet(struct net_info *ni, packet_t *pkt, struct udp_header *udp)
     /* there is a socket listening on this side! */
     usp = hash_entry(helem, struct udp_sock_priv, usp_helem);
 
+    /* is this connection blocked? */
+    if (usp->usp_flags & USP_BLOCK)
+        return PACKET_DROP;
+
     /* check if this socket has enough space */
     if (usp->usp_buffer_len + payload_len >= UDP_BUFFER_SIZE) {
         printk("WARNING: dropping packet because the dgram buffer is full\n");
@@ -335,6 +339,20 @@ udp_sock_destroy(struct socket *sock)
 
     if (priv == NULL)
         return 0;
+
+    /* don't accept anymore datagrams */
+    priv->usp_flags |= USP_BLOCK;
+
+    /* destroy the pending datagrams */
+    while (!list_empty(&priv->usp_dgrams)) {
+        struct list_elem *elem;
+        struct udp_dgram *udg;
+
+        elem = list_pop_front(&priv->usp_dgrams);
+        udg = list_entry(elem, struct udp_dgram, udg_elem);
+        free(udg->udg_buffer);
+        free(udg);
+    }
 
     net_free_port(SOCK_DGRAM, priv->usp_srcport);
 

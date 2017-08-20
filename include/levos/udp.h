@@ -32,6 +32,9 @@ struct udp_sock_priv {
     port_t    usp_dstport;
     port_t    usp_srcport;
 
+#define USP_BLOCK (1 << 0) /* don't accept datagrams */
+    int usp_flags;
+
     struct hash_elem usp_helem;
 
     /* total amount of space used by the datagrams */
