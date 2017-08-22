@@ -4,6 +4,7 @@
 #include <levos/ip.h>
 #include <levos/arp.h>
 #include <levos/work.h>
+#include <levos/socket.h>
 
 /* TODO list:
  * 1) segment reconstruction
@@ -198,7 +199,7 @@ tcp_find_info(struct net_info *ni, port_t srcport)
 void
 tcp_do_fail(struct net_info *ni, struct tcp_info *ti, int errno)
 {
-    ti->ti_tcp_state = TI_STATE_FAILED;
+    ti->ti_tcp_state = TI_STATE_CLOSED;
     ti->ti_fail_code = errno;
 }
 
@@ -212,13 +213,17 @@ tcp_notify_retransmit_failed(struct net_info *ni, packet_t *pkt)
 
     /* find the corresponding tcp_info */
     ti = tcp_find_info(ni, tcp->tcp_src_port);
-    panic_ifnot(ti != NULL);
+    if (!ti) {
+        printk("WARNING: notified a TCP retransit failed with NULL ti\n");
+        return;
+    }
+    //panic_ifnot(ti != NULL);
     /* ^ this assert is valid, since we can't fault on a retransmission
      * that lacks a tcp_info
      */
 
     ti->ti_fail_code = -ETIMEDOUT;
-    ti->ti_tcp_state = TI_STATE_FAILED;
+    ti->ti_tcp_state = TI_STATE_CLOSED;
     return;
 }
 
@@ -237,9 +242,9 @@ tcp_send_packet(struct net_info *ni, struct tcp_info *ti, packet_t *pkt, size_t 
     /* FIXME: other _finalize_packet calls should be removed */
     tcp_finalize_packet(tcp, len);
 
-    rt = packet_schedule_retransmission(ni, pkt, 10, 50,
+    /*rt = packet_schedule_retransmission(ni, pkt, 3, 50,
             tcp_notify_retransmit_failed);
-    ti->ti_retransmit_work = rt;
+    ti->ti_retransmit_work = rt;*/
 
     ndev->send_packet(ndev, pkt);
 }
@@ -257,7 +262,7 @@ tcp_conn_send(struct net_info *ni, struct tcp_info *ti, void *data, size_t len)
      * can two processes send data to the same TI and NI ?
      */
 
-    if (ti->ti_tcp_state != TI_STATE_ESTABLISHED)
+    if (ti->ti_tcp_state != TI_STATE_ESTAB)
         return -ENOTCONN;
 
     pkt = tcp_new_packet(ni, ti->ti_src_port, ti->ti_dstip, ti->ti_dst_port);
@@ -303,6 +308,9 @@ tcp_conn_start(struct net_info *ni, port_t srcport, ip_addr_t dstip,
         goto fail_nolock;
     }
 
+    ring_buffer_init(&ti->ti_rb, TCP_BUFFER_SIZE);
+    ring_buffer_set_flags(&ti->ti_rb, RB_FLAG_NONBLOCK);
+
     /* lock since we are manipulating */
     spin_lock(&ni->ni_tcp_infos_lock);
 
@@ -317,8 +325,9 @@ tcp_conn_start(struct net_info *ni, port_t srcport, ip_addr_t dstip,
     ti->ti_dst_port = dstport;
     ti->ti_next_ack = 0;
     ti->ti_next_seq = 0;
-    ti->ti_tcp_state = TI_STATE_UNDEFINED;
+    ti->ti_tcp_state = TI_STATE_CLOSED;
     ti->ti_dstip = dstip;
+    ti->ti_retransmit_work = NULL;
 
     /* insert the tcp_info */
     hash_insert(&ni->ni_tcp_infos, &ti->ti_helem);
@@ -345,15 +354,11 @@ tcp_conn_start(struct net_info *ni, port_t srcport, ip_addr_t dstip,
     //e1000_send_packet(edev, pkt);
     tcp_send_packet(ni, ti, pkt, 0);
 
-    struct work *rt;
-    rt = packet_schedule_retransmission(ni, pkt, 5, 1000, tcp_notify_retransmit_failed);
-    ti->ti_retransmit_work = rt;
-
-    while (ti->ti_tcp_state != TI_STATE_ESTABLISHED &&
-            ti->ti_tcp_state != TI_STATE_FAILED)
+    while (ti->ti_tcp_state != TI_STATE_ESTAB &&
+            ti->ti_tcp_state != TI_STATE_CLOSED)
         ;
 
-    if (ti->ti_tcp_state == TI_STATE_FAILED)
+    if (ti->ti_tcp_state == TI_STATE_CLOSED)
         return ti->ti_fail_code;
 
     return 0;
@@ -385,13 +390,14 @@ tcp_conn_close(struct net_info *ni, struct tcp_info *ti)
 
     tcp_finalize_packet(tcp, 0);
 
-    ti->ti_tcp_state = TI_STATE_FIN_SENT;
+    ti->ti_tcp_state = TI_STATE_FIN_WAIT_1;
 
     //e1000_send_packet(edev, pkt);
     tcp_send_packet(ni, ti, pkt, 0);
 
+#if 0
     while (ti->ti_tcp_state != TI_STATE_CLOSED
-            && ti->ti_tcp_state != TI_STATE_FAILED) {
+            && ti->ti_tcp_state != TI_STATE_CLOSED) {
         if (ti->ti_tcp_state == TI_STATE_FAILED) {
             net_printk("Forcefully closing connection\n");
             ti->ti_tcp_state = TI_STATE_CLOSED;
@@ -399,10 +405,12 @@ tcp_conn_close(struct net_info *ni, struct tcp_info *ti)
             return -ECONNRESET;
         }
     }
+#endif
 
     return 0;
 }
 
+#if 0
 int
 tcp_handle_synack(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
             struct tcp_header *tcp)
@@ -424,8 +432,8 @@ tcp_handle_synack(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
     struct tcp_header *ntcp = packet->p_buf + packet->pkt_proto_offset;
 
     tcp_packet_set_ack(packet, 1);
-    ntcp->tcp_seq = to_be_32(to_le_32(tcp->tcp_ack));
-    ntcp->tcp_ack = to_be_32(to_le_32(tcp->tcp_seq) + 1);
+    ntcp->tcp_seq = to_be_32(to_le_32(tcp->tcp_ack)); /* wtf? */
+    ntcp->tcp_ack = to_be_32(to_le_32(tcp->tcp_seq) + 1); /* wtf? */
     tcp_finalize_packet(ntcp, 0);
 
     //ti->ti_next_seq = to_le_32(tcp->tcp_ack);
@@ -440,12 +448,15 @@ tcp_handle_synack(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
 
     return PACKET_HANDLED;
 }
+#endif
 
 void
 tcp_cancel_retransmission(struct tcp_info *ti)
 {
-    if (ti->ti_retransmit_work)
+    if (ti->ti_retransmit_work) {
         work_cancel(ti->ti_retransmit_work);
+        ti->ti_retransmit_work = NULL;
+    }
 }
 
 void
@@ -459,11 +470,13 @@ tcp_handle_ack(struct net_info *ni, packet_t *pkt, struct tcp_info *ti, struct t
      */
     tcp_cancel_retransmission(ti);
 
+#if 0
     if (ti->ti_tcp_state == TI_STATE_FINACK_SENT) {
         ti->ti_tcp_state == TI_STATE_CLOSED;
         net_printk("tcp connection closed!\n");
         return;
     }
+#endif
 
     //ti->ti_next_ack = tcp->tcp_seq + 1;
     //ti->ti_next_seq = tcp->tcp_ack;
@@ -477,6 +490,9 @@ tcp_handle_fin(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
 
     net_printk(" ^^ FIN\n");
 
+    return;
+}
+#if 0
     if (ti->ti_tcp_state != TI_STATE_FIN_SENT)
         ti->ti_tcp_state = TI_STATE_FIN_RECV;
 
@@ -512,6 +528,7 @@ tcp_handle_fin(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
 
     return PACKET_HANDLED;
 }
+#endif
 
 int
 tcp_reset_connection(struct net_info *ni, struct tcp_info *ti)
@@ -531,15 +548,19 @@ tcp_reset_connection(struct net_info *ni, struct tcp_info *ti)
 
     tcp_send_packet(ni, ti, pkt, 0);
 
+    tcp_do_fail(ni, ti, ECONNRESET);
+
     return PACKET_DROP;
 }
 
 uint32_t
 tcp_get_payload_size(packet_t *pkt, struct tcp_header *tcp)
 {
-    uint32_t sz = pkt->p_len;
+    uint32_t sz;
+    struct ip_base_header *ip = pkt->p_buf + pkt->pkt_ip_offset;
 
-    sz -= pkt->pkt_proto_offset;
+    /* XXX: should be calculated from ipv4's ihl field */
+    sz = to_le_16(ip->ip_len) - sizeof(struct ip_base_header);
 
     sz -= tcp_get_doff(tcp) * sizeof(uint32_t);
 
@@ -601,6 +622,159 @@ tcp_handle_push(struct net_info *ni, packet_t *pkt, struct tcp_info *ti,
 }
 
 int
+tcp_handle_packet_synsent(struct net_info *ni, struct tcp_info *ti,
+                        packet_t *pkt, struct tcp_header *tcp)
+{
+    packet_t *packet;
+    struct tcp_header *ntcp;
+
+    /* check if we received SYNACK or just SYN */
+    if (tcp_is_set_syn(tcp)) {
+        if (tcp_is_set_ack(tcp)) {
+            /* 
+             * synchronize the sequence numbers, adding one because we need to
+             * ACK the SYN flag
+             */
+            ti->ti_next_ack = to_le_32(tcp->tcp_seq) + 1;
+            ti->ti_next_seq = 1;
+
+            /* send an ACK packet */
+            packet = tcp_new_packet(ni, ti->ti_src_port, ti->ti_dstip, ti->ti_dst_port);
+            if (!packet)
+                return PACKET_DROP;
+
+            ntcp = packet->p_buf + packet->pkt_proto_offset;
+
+            tcp_packet_set_ack(packet, 1);
+            ntcp->tcp_seq = to_be_32(ti->ti_next_seq);
+            ntcp->tcp_ack = to_be_32(ti->ti_next_ack); 
+            tcp_finalize_packet(ntcp, 0);
+
+            /* send the ACK packet */
+            tcp_send_packet(ni, ti, packet, 0);
+
+            /* received a SYN ACK, the connection is now established */
+            ti->ti_tcp_state = TI_STATE_ESTAB;
+        } else {
+            /* TODO: this is not really compliant */
+            printk("WARNING: tcp_info in SYN_SENT but only received a SYN, no ACK\n");
+            tcp_reset_connection(ni, ti);
+            return;
+
+            /* sync */
+            ti->ti_next_ack = to_le_32(tcp->tcp_seq) + 1;
+            ti->ti_next_seq = 1;
+
+            /* received a SYN only, wait for ACK */
+            ti->ti_tcp_state = TI_STATE_SYN_RCVD;
+        }
+    } else {
+        /* XXX: check with RFC */
+        tcp_reset_connection(ni, ti);
+    }
+}
+
+int
+tcp_handle_packet_estab(struct net_info *ni, struct tcp_info *ti,
+                        packet_t *pkt, struct tcp_header *tcp)
+{
+    int payload_len = tcp_get_payload_size(pkt, tcp);
+    bool acked = false;
+
+    if (tcp_is_set_ack(tcp)) {
+        /* XXX: cancel retransmission here */
+
+        if (payload_len > 0) {
+            //printk("payload_len: %d\n", payload_len);
+            void *payload = tcp_get_payload(tcp);
+
+            /* check if we have enough space to write the payload */
+            if (ring_buffer_size(&ti->ti_rb) + payload_len < TCP_BUFFER_SIZE) {
+                /* XXX: does this need locking? */
+                ring_buffer_write(&ti->ti_rb, payload, payload_len);
+
+                /* send ACK */
+                tcp_ack_packet(ni, pkt, ti, tcp);
+
+                ti->ti_next_ack += payload_len;
+
+                acked = true;
+            } else {
+                tcp_ack_packet(ni, pkt, ti, tcp);
+                ti->ti_next_ack += payload_len;
+                printk("WARNING: tcp: dropping a packet because there is no space\n");
+            }
+        }
+    }
+
+    if (tcp_is_set_fin(tcp)) {
+        struct tcp_header *ntcp;
+        packet_t *packet;
+
+        /* we need to ack the FIN flag */
+        ti->ti_next_ack ++;
+
+        /* send an ACK packet */
+        packet = tcp_new_packet(ni, ti->ti_src_port, ti->ti_dstip, ti->ti_dst_port);
+        if (!packet)
+            return PACKET_DROP;
+
+        ntcp = packet->p_buf + packet->pkt_proto_offset;
+
+        tcp_packet_set_ack(packet, 1);
+        ntcp->tcp_seq = to_be_32(ti->ti_next_seq);
+        ntcp->tcp_ack = to_be_32(ti->ti_next_ack); 
+        tcp_finalize_packet(ntcp, 0);
+
+        /* send the ACK packet */
+        tcp_send_packet(ni, ti, packet, 0);
+
+        /* move to CLOSE_WAIT */
+        ti->ti_tcp_state = TI_STATE_CLOSE_WAIT;
+
+        /* XXX: we don't support closing, so just close it */
+
+        /* send a FIN packet */
+        packet = tcp_new_packet(ni, ti->ti_src_port, ti->ti_dstip, ti->ti_dst_port);
+        if (!packet)
+            return PACKET_DROP;
+
+        ntcp = packet->p_buf + packet->pkt_proto_offset;
+
+        tcp_packet_set_fin(packet, 1);
+        ntcp->tcp_seq = to_be_32(ti->ti_next_seq);
+        ntcp->tcp_ack = to_be_32(ti->ti_next_ack); 
+        tcp_finalize_packet(ntcp, 0);
+
+        /* send the FIN packet */
+        tcp_send_packet(ni, ti, packet, 0);
+
+        /* move to LAST_ACK */
+        ti->ti_tcp_state = TI_STATE_LAST_ACK;
+
+        return PACKET_HANDLED;
+    }
+
+    return acked ? PACKET_HANDLED : PACKET_DROP;
+}
+
+int
+tcp_handle_packet_lastack(struct net_info *ni, struct tcp_info *ti,
+                        packet_t *pkt, struct tcp_header *tcp)
+{
+    if (tcp_is_set_ack(tcp)) {
+        /* TCP connection is closed! */
+
+        printk("closed TCP connection\n");
+        return PACKET_HANDLED;
+    } else {
+        /* is this correct? XXX */
+        tcp_reset_connection(ni, ti);
+        return PACKET_HANDLED;
+    }
+}
+
+int
 tcp_handle_packet(struct net_info *ni, packet_t *pkt, struct tcp_header *tcp)
 {
     struct tcp_info *ti;
@@ -613,23 +787,13 @@ tcp_handle_packet(struct net_info *ni, packet_t *pkt, struct tcp_header *tcp)
     net_printk("TCP port: %d\n", tcp->tcp_dst_port);
 
     /* try to find a tcp_info for the target port */
-    ti = tcp_find_info(ni, tcp->tcp_dst_port);
+    ti = tcp_find_info(ni, to_be_16(tcp->tcp_dst_port));
     if (ti == NULL) {
         net_printk("   ^no tcp_info for this packet, dropped\n");
         return PACKET_DROP;
     }
 
-    /* do we increase seq? */
-    if (tcp_is_set_syn(tcp) || tcp_is_set_fin(tcp))
-        ti->ti_next_seq ++;
-
-    /* handle ACK packets quickly */
-    if (tcp_is_set_ack(tcp)) {
-        tcp_handle_ack(ni, pkt, ti, tcp);
-        if (tcp_is_set_syn(tcp))
-            return tcp_handle_synack(ni, pkt, ti, tcp);
-    }
-
+    /* does the otherside want a RST? */
     if (tcp_is_set_rst(tcp)) {
         if (ti->ti_tcp_state == TI_STATE_SYN_SENT)
             tcp_do_fail(ni, ti, ECONNREFUSED);
@@ -638,13 +802,20 @@ tcp_handle_packet(struct net_info *ni, packet_t *pkt, struct tcp_header *tcp)
         return PACKET_HANDLED;
     }
 
-    if (tcp_is_set_psh(tcp))
-        return tcp_handle_push(ni, pkt, ti, tcp);
-
-    if (tcp_is_set_fin(tcp))
-        return tcp_handle_fin(ni, pkt, ti, tcp);
-
-    net_printk("   ^ mere ACK packet\n");
+    switch (ti->ti_tcp_state) {
+        case TI_STATE_CLOSED:
+            /* if we received a packet to a closed socket, drop it */
+            return PACKET_DROP;
+        case TI_STATE_SYN_SENT:
+            return tcp_handle_packet_synsent(ni, ti, pkt, tcp);
+        case TI_STATE_ESTAB:
+            return tcp_handle_packet_estab(ni, ti, pkt, tcp);
+        case TI_STATE_LAST_ACK:
+            return tcp_handle_packet_lastack(ni, ti, pkt, tcp);
+        default:
+            printk("drop this shit\n");
+            return;
+    }
 
     return PACKET_DROP;
 }
@@ -688,3 +859,103 @@ test_tcp(struct net_info *ni)
         net_printk("tcp failed to close %s\n", errno_to_string(rc));
     }
 }
+
+int
+tcp_sock_connect(struct socket *sock, struct sockaddr_in *addr, socklen_t len)
+{
+    int rc;
+    port_t src_port;
+    struct tcp_info *ti;
+
+    /* find net_info for the target addr */
+    sock->sock_ni = route_find_ni_for_dst(addr->sin_addr);
+
+    /* find a free ephmereal port */
+    src_port = net_allocate_port(SOCK_STREAM);
+
+    /* try connecting the socket */
+    rc = tcp_conn_start(sock->sock_ni, src_port, addr->sin_addr, addr->sin_port);
+    if (rc) {
+        printk("failed to connect TCP socket: %s\n", errno_to_string(rc));
+        return rc;
+    }
+
+    /* grab the tcp_info */
+    ti = tcp_find_info(sock->sock_ni, src_port);
+    panic_ifnot(ti != NULL);
+
+    sock->sock_priv = ti;
+
+    return 0;
+}
+
+int
+__tcp_write(struct net_info *ni, struct tcp_info *ti, void *buf, size_t len)
+{
+    packet_t *packet;
+    struct tcp_header *ntcp;
+
+    /* send an ACK packet */
+    packet = tcp_new_packet(ni, ti->ti_src_port, ti->ti_dstip, ti->ti_dst_port);
+    if (!packet)
+        return PACKET_DROP;
+
+    ntcp = packet->p_buf + packet->pkt_proto_offset;
+
+    tcp_packet_set_ack(packet, 1);
+    tcp_packet_set_psh(packet, 1);
+    ntcp->tcp_seq = to_be_32(ti->ti_next_seq);
+    ntcp->tcp_ack = to_be_32(ti->ti_next_ack); 
+
+    tcp_set_payload(packet, buf, len);
+
+    //tcp_finalize_packet(ntcp, len);
+
+    /* send the ACK packet */
+    tcp_send_packet(ni, ti, packet, len);
+}
+
+int
+tcp_sock_write(struct socket *sock, void *buf, size_t len)
+{
+    int rc = 0;
+    struct tcp_info *ti = sock->sock_priv;
+
+    if (!ti || ti->ti_tcp_state != TI_STATE_ESTAB)
+        return -ENOTCONN;
+
+    /* split into 536 byte segments */
+    if (len < 536) {
+        return __tcp_write(sock->sock_ni, ti, buf, len);
+    } else {
+        printk("WARNING: MSS is 536\n");
+        return 0;
+    }
+}
+
+int
+tcp_sock_read(struct socket *sock, void *buf, size_t len)
+{
+    struct tcp_info *ti = sock->sock_priv;
+
+    if (!ti || ti->ti_tcp_state != TI_STATE_ESTAB)
+        return -ENOTCONN;
+
+    while (ring_buffer_size(&ti->ti_rb) == 0)
+        ;
+
+    return ring_buffer_read(&ti->ti_rb, buf, len);
+}
+
+int
+tcp_sock_destroy(struct socket *sock)
+{
+    return -ENOSYS;
+}
+
+struct socket_ops tcp_sock_ops = {
+    .connect = tcp_sock_connect,
+    .write = tcp_sock_write,
+    .read = tcp_sock_read,
+    .destroy = tcp_sock_destroy,
+};

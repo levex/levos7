@@ -70,6 +70,15 @@ build_binutils() {
 	echo Binutils installed to compose root
 }
 
+build_l_coreutils() {
+	for prog in cat date echo getty ls mkdir uname wc udp tcp
+	do
+		i686-levos-gcc \
+			${_buildtools}/../userspace/simple/$prog.c \
+			-o ${_compose_root}/usr/bin/$prog
+	done
+}
+
 read -p "Do you want dash, a POSIX-compatible shell? " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]
@@ -82,6 +91,13 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]
 then
     build_binutils
+fi
+
+read -p "Do you want some coreutils clones (ls, mkdir, cat, and so on)? " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]
+then
+    build_l_coreutils
 fi
 
 read -p "What should be copied to /init? [/usr/bin/dash is an ideal choice, leave empty if none] " -r

@@ -141,6 +141,10 @@ worker_thread(void)
         }
 
         spin_lock(&work_lock);
+        if (list_empty(&work_list)) {
+            spin_unlock(&work_lock);
+            continue;
+        }
         work = list_entry(list_pop_front(&work_list), struct work, elem);
         if (work->work_at >= work_get_ticks()) {
             list_push_front(&work_list, &work->elem);
@@ -163,7 +167,7 @@ work_init(void)
     worker_task = create_kernel_task(worker_thread);
     sched_add_rq(worker_task);
 
-    printk("kworker initialized\n");
+    printk("kworker initialized as pid %d\n", worker_task->pid);
 
     return 0;
 }

@@ -6,6 +6,7 @@
 #include <levos/packet.h>
 #include <levos/ip.h>
 #include <levos/hash.h>
+#include <levos/ring.h>
 
 #define TCP_FLAGS_NS   (1 << 8)
 #define TCP_FLAGS_CWR  (1 << 7)
@@ -95,28 +96,32 @@ _gen_tcp_flag_getset(rst, RST);
 _gen_tcp_flag_getset(syn, SYN);
 _gen_tcp_flag_getset(fin, FIN);
 
-#define TI_STATE_UNDEFINED      0
-#define TI_STATE_SYN_SENT       1
-#define TI_STATE_SYNACK         2
-#define TI_STATE_ESTABLISHED    3
-#define TI_STATE_FAILED         4
-#define TI_STATE_FIN_RECV       5
-#define TI_STATE_FIN_SENT       6
-#define TI_STATE_FINACK_RECV    7
-#define TI_STATE_FINACK_SENT    8
-#define TI_STATE_CLOSED         9
+#define TI_STATE_CLOSED      0
+#define TI_STATE_SYN_SENT    1
+#define TI_STATE_ESTAB       2
+#define TI_STATE_CLOSE_WAIT  3
+#define TI_STATE_LAST_ACK    4
+#define TI_STATE_LISTEN      5
+#define TI_STATE_SYN_RCVD    6
+#define TI_STATE_FIN_WAIT_1  7
+#define TI_STATE_FIN_WAIT_2  8
+#define TI_STATE_TIME_WAIT   9
+#define TI_STATE_CLOSING    10
 
 struct tcp_info {
              port_t           ti_src_port; /* port on our machine */
              port_t           ti_dst_port; /* port on remote machine */
     volatile int              ti_tcp_state;
              int              ti_fail_code;
-             uint32_t         ti_next_ack;
-             uint32_t         ti_next_seq;
+             uint32_t         ti_next_ack; /* how much of the other side we've seen so far */
+             uint32_t         ti_next_seq; /* how much we've sent so far */
 
              ip_addr_t        ti_dstip;
 
              struct work     *ti_retransmit_work;
+
+#define TCP_BUFFER_SIZE 16384
+             struct ring_buffer ti_rb; /* data collected so far */
              
              struct hash_elem ti_helem;
 };

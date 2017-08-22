@@ -120,11 +120,19 @@ socket_udp_create(struct socket *sock, int proto)
     return 0;
 }
 
+extern struct socket_ops tcp_sock_ops;
 int
 socket_tcp_create(struct socket *sock, int proto)
 {
-    printk("WARNING: tcp sockets are not yet supported\n");
-    return -ENOSYS;
+    if (proto != 0)
+        return -EINVAL;
+
+    sock->sock_proto = 0;
+    sock->sock_type = SOCK_STREAM;
+    sock->sock_ops = &tcp_sock_ops;
+    sock->sock_priv = NULL;
+
+    return 0;
 }
 
 int
