@@ -7,6 +7,7 @@
 #include <levos/ip.h>
 #include <levos/hash.h>
 #include <levos/ring.h>
+#include <levos/spinlock.h>
 
 #define TCP_FLAGS_NS   (1 << 8)
 #define TCP_FLAGS_CWR  (1 << 7)
@@ -115,6 +116,7 @@ struct tcp_info {
              int              ti_fail_code;
              uint32_t         ti_next_ack; /* how much of the other side we've seen so far */
              uint32_t         ti_next_seq; /* how much we've sent so far */
+             uint32_t         ti_unack;    /* oldest unack'ed number */
 
              ip_addr_t        ti_dstip;
 

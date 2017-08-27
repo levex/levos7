@@ -7,6 +7,7 @@
 struct list work_list;
 spinlock_t work_lock;
 struct work *current_work;
+void work_destroy(struct work *);
 
 extern uint32_t __pit_ticks;
 
@@ -65,6 +66,7 @@ work_reschedule(uint32_t delay)
     if (current_work->work_flags & WORK_FLAG_CANCELLED)
         return -1;
 
+    current_work->work_flags &= ~WORK_FLAG_KILLED;
     schedule_work_delay(current_work, delay);
 
     return 0;
@@ -78,11 +80,10 @@ work_cancel(struct work *work)
     if (work == current_work) {
         /* if the currently running work is being cancelled, set a flag */
         work->work_flags |= WORK_FLAG_CANCELLED;
-    } else if (work->work_flags & WORK_FLAG_QUEUED == 0) {
+    } else if (work->work_flags & WORK_FLAG_CANCELLED) {
         return -1;
     } else {
-        list_remove(&work->elem);
-        work_destroy(work);
+        work->work_flags |= WORK_FLAG_KILLED;
     }
 
     spin_unlock(&work_lock);
@@ -124,9 +125,15 @@ do_work(struct work *work)
 {
     current_work = work;
 
-    work->work_func(work->work_aux);
+    if (!(work->work_flags & WORK_FLAG_KILLED)) {
+        work->work_flags |= WORK_FLAG_KILLED;
+        work->work_func(work->work_aux);
+    }
+
+    current_work = NULL;
     
-    work_destroy(work);
+    if (work->work_flags & WORK_FLAG_KILLED)
+        work_destroy(work);
 }
 
 void
@@ -135,14 +142,10 @@ worker_thread(void)
     struct work *work;
 
     while (1) {
-        if (list_empty(&work_list)) {
-            sched_yield();
-            continue;
-        }
-
         spin_lock(&work_lock);
         if (list_empty(&work_list)) {
             spin_unlock(&work_lock);
+            sched_yield();
             continue;
         }
         work = list_entry(list_pop_front(&work_list), struct work, elem);

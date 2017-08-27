@@ -240,6 +240,7 @@ file_from_socket(struct socket *sock)
     filp->respath = NULL;
     filp->priv = sock;
     filp->fops = &socket_fops;
+    filp->refc = 1;
 
     return filp;
 }

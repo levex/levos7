@@ -6,6 +6,7 @@
 
 #define WORK_FLAG_CANCELLED (1 << 0)
 #define WORK_FLAG_QUEUED    (1 << 1)
+#define WORK_FLAG_KILLED    (1 << 2)
 
 struct work {
     void (*work_func)(void *);
