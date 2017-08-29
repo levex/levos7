@@ -70,7 +70,7 @@ arp_do_request_eth(struct net_info *ni, ip_addr_t ip)
 {
     packet_t *pkt;
     struct net_device *ndev = NDEV_FROM_NI(ni);
-    int delay = 10000;
+    int delay = 100000, tries = 3;
     struct hash_elem *entry;
     struct arp_cache_entry ace;
 
@@ -111,7 +111,7 @@ arp_get_eth_addr(struct net_info *ni, ip_addr_t ip)
     struct hash_elem *helem = hash_find(&arpcache, &entry.helem);
     if (helem == NULL) {
         /* not in the cache, send request, wait then add to cache */
-        net_printk("%s: cache miss\n", __func__);
+        printk("%s: cache miss\n", __func__);
         return arp_do_request_eth(ni, ip);
     } else {
         /* element was in the cache, return the ethernet address */

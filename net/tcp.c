@@ -121,6 +121,7 @@ tcp_construct_packet(struct net_info *ni, eth_addr_t hw_mac, ip_addr_t _srcip, p
 
     net_printk("%s: constructing packet to %pI from %pI\n", __func__, dstip, srcip);
 
+    /*
     dsteth = arp_get_eth_addr(ni, _dstip);
     if (dsteth == NULL) {
         net_printk("%s: failed to acquire the eth address\n", __func__);
@@ -128,8 +129,10 @@ tcp_construct_packet(struct net_info *ni, eth_addr_t hw_mac, ip_addr_t _srcip, p
     }
 
     net_printk("%s: acquired eth address: %pE\n", __func__, dsteth);
+    */
 
-    packet_t *pkt = ip_construct_packet_eth_full(hw_mac, dsteth, _srcip, _dstip);
+    //packet_t *pkt = ip_construct_packet_eth_full(hw_mac, dsteth, _srcip, _dstip);
+    packet_t *pkt = ip_construct_packet_ni(ni, _dstip);
     if (!pkt)
         return NULL;
 
@@ -212,7 +215,7 @@ tcp_notify_retransmit_failed(struct net_info *ni, packet_t *pkt)
     struct tcp_header *tcp = pkt->p_buf + pkt->pkt_proto_offset;
 
     /* find the corresponding tcp_info */
-    ti = tcp_find_info(ni, tcp->tcp_src_port);
+    ti = tcp_find_info(ni, to_le_16(tcp->tcp_src_port));
     if (!ti) {
         printk("WARNING: notified a TCP retransit failed with NULL ti\n");
         packet_destroy(pkt);
@@ -256,9 +259,9 @@ tcp_send_packet(struct net_info *ni, struct tcp_info *ti, packet_t *pkt, size_t 
     struct work *rt;
 
     while (ti->ti_retransmit_work)
-        ;
+        sched_yield();
 
-    rt = packet_schedule_retransmission(ni, pkt, 3, 150,
+    rt = packet_schedule_retransmission(ni, pkt, 10, 200,
             tcp_notify_retransmit_failed);
     ti->ti_retransmit_work = rt;
 #endif
@@ -654,7 +657,7 @@ tcp_handle_packet_synsent(struct net_info *ni, struct tcp_info *ti,
              * ACK the SYN flag
              */
             ti->ti_next_ack = to_le_32(tcp->tcp_seq) + 1;
-            ti->ti_unack = 1;
+            ti->ti_unack = 0;
             ti->ti_next_seq = 1;
 
             /* send an ACK packet */
@@ -702,6 +705,11 @@ tcp_handle_packet_estab(struct net_info *ni, struct tcp_info *ti,
 
     if (tcp_is_set_ack(tcp)) {
         /* XXX: cancel retransmission here */
+        
+        if (tcp_is_set_syn(tcp)) {
+            /* this is a synack, pass above */
+            return tcp_handle_packet_synsent(ni, ti, pkt, tcp);
+        }
 
         if (payload_len > 0) {
             //printk("payload_len: %d\n", payload_len);
@@ -793,6 +801,16 @@ tcp_handle_packet_lastack(struct net_info *ni, struct tcp_info *ti,
     }
 }
 
+void
+tcp_cond_ack(struct net_info *ni, packet_t *pkt,
+        struct tcp_info *ti, struct tcp_header *tcp)
+{
+    if (tcp_is_set_fin(tcp) || tcp_is_set_syn(tcp))
+        tcp_ack_packet(ni, pkt, ti, tcp);
+    else if (tcp_get_payload_size(pkt, tcp) > 0)
+        tcp_ack_packet(ni, pkt, ti, tcp);
+}
+
 int
 tcp_handle_packet(struct net_info *ni, packet_t *pkt, struct tcp_header *tcp)
 {
@@ -814,14 +832,17 @@ tcp_handle_packet(struct net_info *ni, packet_t *pkt, struct tcp_header *tcp)
 
     uint32_t seg_seq = to_le_32(tcp->tcp_seq);
     if (!(ti->ti_next_ack <= seg_seq)) {
-        net_printk("invalid sequence number, dropping\n");
+        /* still ACK it, maybe the ACK was lost */
+        tcp_cond_ack(ni, pkt, ti, tcp);
+        printk("invalid sequence number, dropping\n");
         return PACKET_DROP;
     }
 
     if (tcp_is_set_ack(tcp)) {
         if (!(ti->ti_unack < to_le_32(tcp->tcp_ack))) { /* && to_le_32(tcp->tcp_ack) <= ti->ti_next_seq)) { */
-            net_printk("invalid ACK number (%d) unack: %d, dropping\n",
+            printk("invalid ACK number (%d) unack: %d, dropping\n",
                     to_le_32(tcp->tcp_ack), ti->ti_unack);
+            tcp_cond_ack(ni, pkt, ti, tcp);
             return PACKET_DROP;
         }
         ti->ti_unack = to_le_32(tcp->tcp_ack) - 1;
@@ -961,11 +982,14 @@ tcp_sock_write(struct socket *sock, void *buf, size_t len)
 
     /* split into 536 byte segments */
     if (len < 536) {
-        return __tcp_write(sock->sock_ni, ti, buf, len);
+        rc = __tcp_write(sock->sock_ni, ti, buf, len);
     } else {
         printk("WARNING: MSS is 536\n");
-        return 0;
+        rc = 0;
     }
+
+    printk("RETURNED FROM %s\n", __func__);
+    return rc;
 }
 
 int

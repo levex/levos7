@@ -65,6 +65,12 @@ void vprintk(char *fmt, va_list ap)
                             i += 2;
                             break;
                         }
+                        case 'i': { /* le ip addr */
+                            uint32_t ptr = va_arg(ap, uint32_t);
+                            printk_print_le_ip_addr(ptr);
+                            i += 2;
+                            break;
+                        }
                     }
                     break;
                 }

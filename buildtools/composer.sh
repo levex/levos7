@@ -71,7 +71,7 @@ build_binutils() {
 }
 
 build_l_coreutils() {
-	for prog in cat date echo getty ls mkdir uname wc udp tcp
+	for prog in cat date echo getty ls mkdir uname wc udp tcp internet irc irc_bot
 	do
 		i686-levos-gcc \
 			${_buildtools}/../userspace/simple/$prog.c \

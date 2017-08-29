@@ -211,7 +211,7 @@ arp_handle_reply(struct net_info *ni, packet_t *pkt, struct arp_header *arp)
     uintptr_t offset = (uintptr_t) ((void *)&arp->arp_opcode + 2);
     void *base = arp;
     int hlen = arp->arp_hlen, plen = arp->arp_plen;
-    net_printk("ARP reply: hsrc %pE psrc %pI hdst %pE pdst %pI\n",
+    printk("ARP reply: hsrc %pE psrc %pI hdst %pE pdst %pI\n",
             offset, offset + hlen, offset + hlen + plen,
             offset + hlen + plen + hlen);
 

@@ -120,7 +120,7 @@ struct tcp_info {
 
              ip_addr_t        ti_dstip;
 
-             struct work     *ti_retransmit_work;
+    volatile struct work     *ti_retransmit_work;
 
 #define TCP_BUFFER_SIZE 16384
              struct ring_buffer ti_rb; /* data collected so far */

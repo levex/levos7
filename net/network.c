@@ -10,6 +10,15 @@
 struct list net_devices_list;
 spinlock_t net_devices_lock;
 
+struct route {
+    ip_addr_t iprt_base;
+    ip_addr_t iprt_netmask;
+    ip_addr_t iprt_gateway;
+    struct net_device *iprt_iface;
+
+    struct list_elem iprt_elem;
+};
+
 struct list route_table;
 spinlock_t route_table_lock;
 
@@ -52,7 +61,23 @@ int
 net_add_route(struct net_device *iface, ip_addr_t base, ip_addr_t netmask,
         ip_addr_t gateway)
 {
-    return -ENOSYS;
+    struct route *route = malloc(sizeof(*route));
+    if (!route)
+        return -ENOMEM;
+
+    spin_lock(&route_table_lock);
+    printk("route: base %pi netMask %pi gateway %pi\n",
+            base, netmask, gateway);
+
+    route->iprt_base = base;
+    route->iprt_netmask = netmask;
+    route->iprt_gateway = gateway;
+    route->iprt_iface = iface;
+
+    list_push_front(&route_table, &route->iprt_elem);
+
+    spin_unlock(&route_table_lock);
+    return 0;
 }
 
 struct net_device *
@@ -84,6 +109,48 @@ struct net_device *
 net_get_default()
 {
     return __default_ndev;
+}
+
+void
+__dump_route(struct route *iprt)
+{
+    printk("%s: base %pi netmask %pi gw %pi\n",
+            __func__, iprt->iprt_base, iprt->iprt_netmask, iprt->iprt_gateway);
+}
+
+uint8_t *
+net_route_to(struct net_info *ni, ip_addr_t dst)
+{
+    uint8_t *desteth;
+    struct list_elem *elem;
+    struct route *route;
+
+    spin_lock(&route_table_lock);
+    list_foreach_raw(&route_table, elem) {
+        route = list_entry(elem, struct route, iprt_elem);
+
+        //printk("trying route to %pi: ", dst);
+        //__dump_route(route);
+
+        //printk("%pi vs %pi\n",
+                //route->iprt_base & route->iprt_netmask,
+                //dst & route->iprt_netmask);
+
+        if ((route->iprt_base & route->iprt_netmask) == (dst & route->iprt_netmask))
+            break;
+    }
+    spin_unlock(&route_table_lock);
+
+    //__dump_route(route);
+
+    if (route->iprt_gateway == 0) {
+        /* this is a local network */
+        desteth = arp_get_eth_addr(ni, dst);
+    } else {
+        desteth = arp_get_eth_addr(ni, route->iprt_gateway);
+    }
+
+    return desteth;
 }
 
 int

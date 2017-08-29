@@ -148,6 +148,13 @@ dhcp_handle_offer(struct net_info *ni, packet_t *pkt,
     /* fetch our IP address */
     net_printk("dhcp: got IP address offer %pI from %pI\n", our_ip, server_ip);
 
+    /* setup a route */
+    net_add_route(ndev, 0, 0, to_le_32(server_ip));
+    net_add_route(ndev, to_le_32(our_ip), 0xffffff00, 0);
+
+    /* save the gateway's MAC address */
+    arp_cache_insert(server_ip, pkt->p_buf + 6);
+
     /* kick the arp engine */
     ni->ni_arp_kick = 1;
     net_printk("^ kicked ARP\n");

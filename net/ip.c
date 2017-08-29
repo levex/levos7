@@ -13,6 +13,13 @@ printk_print_ip_addr(uint32_t _ip)
     printk("%d.%d.%d.%d", (uint8_t) ip[0], (uint8_t) ip[1], (uint8_t) ip[2], (uint8_t) ip[3]);
 }
 
+void
+printk_print_le_ip_addr(uint32_t _ip)
+{
+    char *ip = (char *) &_ip;
+    printk("%d.%d.%d.%d", (uint8_t) ip[3], (uint8_t) ip[2], (uint8_t) ip[1], (uint8_t) ip[0]);
+}
+
 be_uint16_t
 ip_calculate_checksum(struct ip_base_header *ip)
 {
@@ -122,13 +129,18 @@ ip_construct_packet_ni(struct net_info *ni, ip_addr_t dst)
     packet_t *pkt;
     uint8_t *desteth;
 
-    desteth = arp_get_eth_addr(ni, dst);
-    if (desteth == NULL)
+    /* do the routing */
+    desteth = net_route_to(ni, dst);
+    if (desteth == NULL) {
+        printk("null eth\n");
         return NULL;
+    }
     
     pkt = ip_construct_packet_eth_full(ni->ni_hw_mac, desteth, ni->ni_src_ip, dst);
-    if (!pkt)
+    if (!pkt) {
+        printk("failed to construct ip packet\n");
         return NULL;
+    }
 
     return pkt;
 }
